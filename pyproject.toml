@@ -1,0 +1,50 @@
+[tool.poetry]
+name = "posterize"
+version = "0.1.0"
+description = ""
+authors = ["Shay Hill <shay_public@hotmail.com>"]
+readme = "README.md"
+packages = [{include = "posterize", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+svg-ultralight = "^0.19.0"
+basic-colormath = "^0.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^3.3.3"
+conventional-with-data = "^0.1.1"
+pytest = "^7.4.0"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+tag_format = "$version"
+major-version-zero = true
+version_files = [
+    "pyproject.toml:^version"
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pyright]
+include = ["src"]
+exclude = ["**/__pycache__.py"]
+
+pythonVersion = "3.10"
+pythonPlatform = "Any"
+
+typeCheckingMode = "strict"
+reportShadowedImports = true
+reportCallInDefaultInitializer = true
+reportImplicitStringConcatenation = true
+# reportMissingSuperCall = true
+reportPropertyTypeMismatch = true
+reportUninitializedInstanceVariable = true
+reportUnnecessaryTypeIgnoreComment = true
+reportUnusedCallResult = true
+
+venvPath = "C:\\Users\\shaya\\AppData\\Local\\pypoetry\\Cache\\virtualenvs"
+venv = "C:\\Users\\shaya\\AppData\\Local\\pypoetry\\Cache\\virtualenvs\\posterize-r67L9APe-py3.11"
