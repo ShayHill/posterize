@@ -27,6 +27,9 @@ def get_temp_bmp_filename(input_filename: Union[Path, str], infix: TempBmpInfix)
         or any string you'd like to use as a filename stem.
     :param infix: add an infix to the bitmap filename
     :returns: path to an existing or to-be-created bitmap file
+
+    Filename will be the input filename stem with a suffix of the infix, e.g.,
+    "my_file_silhouette.bmp"
     """
     stem = Path(input_filename).stem
     return f"{stem}{infix.value}.bmp"
@@ -39,6 +42,9 @@ def get_temp_svg_filename(filename: Union[Path, str], illumination: float) -> st
         any string you'd like to use as a filename stem.
     :param illumination: the illumination passed to potrace to create the svg.
     :returns: path to an existing or to-be-created svg file
+
+    Filename will include the illumination value rounded to two digits, e.g.,
+    "my_file_0_50.svg"
     """
     stem = Path(filename).stem
     infix = f"{illumination:0.2f}".replace(".", "_")

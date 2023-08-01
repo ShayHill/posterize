@@ -1,5 +1,12 @@
 """Convert images to numpy arrays. Manipulate and save those arrays.
 
+Potrace needs two bitmap images to create vectors for a layered svg:
+
+1. a monochrome image
+2. a silhouette image where transparent pixels are white and opaque pixels are black.
+    This is used in the special case lux == 0 to create a vector for the outline around
+    the entire image.
+
 :author: Shay Hill
 :created: 2023-07-06
 """
@@ -18,9 +25,6 @@ _RgbaPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 4)]
 
 # a colored image with no alpha
 _RgbPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 3)]
-
-# an image with one channel
-_MonoPixels = Annotated[npt.NDArray[np.uint8], (-1, -1)]
 
 # cache this number for float to int conversion
 _BIG_INT = 2**24 - 1

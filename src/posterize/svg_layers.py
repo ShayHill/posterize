@@ -5,6 +5,14 @@ special case, illumination == 0, returns an svg path around all opaque pixels.
 
 This requires writing temporary bmp and svg files to disk in a TemporaryDirectory.
 
+## Usage
+
+    1. create an instance from a picture
+    2. instance(lux: float) to get an svg `<g>` element with smaller dark areas as
+       lux increases.
+
+These layers can be layered over each other, lower lux to higher, to create a picture.
+
 :author: Shay Hill
 :created: 2023-07-06
 """
@@ -15,11 +23,9 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
-import numpy as np
 from lxml import etree
-from svg_ultralight import new_svg_root, write_svg
 
 from posterize import image_arrays as ia
 from posterize import paths
@@ -36,15 +42,19 @@ class SvgLayers:
     Use with .close() or context manager to clean up temp files.
     """
 
-    def __init__(self, input_filename: Union[str, Path], min_speckle_size_scalar: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        input_filename: Union[str, Path],
+        despeckle: Optional[float] = None,
+    ) -> None:
         """Open a temporary directory and write temporary bmp files.
 
         :param input_filename: source filename
-        :param min_speckle_size_scalar: override default minimum speckle size as a
-            fraction of the minimum image dimension.
+        :param despeckle: (0, 1) override default minimum speckle size as a fraction
+            of the minimum image dimension (i.e., higher means less speckling).
         """
-        if min_speckle_size_scalar is None:
-            min_speckle_size_scalar = DEFAULT_MIN_SPECKLE_SIZE_SCALAR
+        if despeckle is None:
+            despeckle = DEFAULT_MIN_SPECKLE_SIZE_SCALAR
         self._tmpdir = tempfile.TemporaryDirectory()
         self._stem = Path(input_filename).stem
 
@@ -52,7 +62,7 @@ class SvgLayers:
         self.height, self.width = pixels.shape[:2]
         self.min_dim = min(self.height, self.width)
 
-        self._tsize = self.min_dim * min_speckle_size_scalar
+        self._tsize = self.min_dim * despeckle
 
         monochrome = paths.get_temp_bmp_filename(
             input_filename, paths.TempBmpInfix.MONOCHROME
@@ -69,7 +79,7 @@ class SvgLayers:
         """Close the temporary directory."""
         self._tmpdir.cleanup()
 
-    def __enter__(self) -> SVGLayers:
+    def __enter__(self) -> SvgLayers:
         """Do nothing. Temp directory will open itself."""
         return self
 
@@ -128,5 +138,3 @@ class SvgLayers:
         svg_path = self._write_svg(illumination)
         root = etree.parse(str(svg_path)).getroot()
         return root[1]
-
-

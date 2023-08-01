@@ -24,12 +24,12 @@ slightly unintuitive.
 
 :param background: "#ffffff". The color of the background.
 
-:param stroke: "#ffffff", The color of a stroke around the silhouette (illumination 0
-    geometry).
+:param strokes: ("#ffffff", ), The colors of a stroke or strokes around the
+    silhouette (illumination 0 geometry).
 
-:param stroke_width: the width of the stroke around the silhouette.
+:param stroke_widths: the width of the strokes around the silhouette.
 
-:param speckle_size_scalar: [0, 1] optionally override the default despeckling. The
+:param despeckle: [0, 1] optionally override the default despeckling. The
     higher the value, the less speckling. Too high, and you won't have any geometry
     at all.
 
@@ -37,42 +37,27 @@ slightly unintuitive.
 :created: 2023-07-11
 """
 
-import numpy as np
+import sys
 from pathlib import Path
 from typing import Union, Optional, Iterable
-from svg_ultralight import new_svg_root, format_number, write_svg, new_sub_element
+from svg_ultralight import new_svg_root, format_number, write_svg, new_sub_element, write_png_from_svg
 
 from posterize.svg_layers import SvgLayers
-from posterize.paths import BINARIES
-from basic_colormath import hex_to_rgb, rgb_to_hex
 
-
-def _hex_interp(hex_a: str, hex_b: str, time: float) -> str:
-    """Interpolate between two hex colors.
-
-    :param hex_a: The first hex color.
-    :param hex_b: The second hex color.
-    :param time: The time to interpolate at. 0.0 returns hex_a, 1.0 returns hex_b.
-    :return: The interpolated hex color.
-    """
-    rgb_a = np.array(hex_to_rgb(hex_a))
-    rgb_b = np.array(hex_to_rgb(hex_b))
-    r, g, b = np.round(rgb_a + time * (rgb_b - rgb_a))
-    return rgb_to_hex((r, g, b))
-
+INKSCAPE = str(Path(r"C:\Program Files\Inkscape\bin\inkscape"))
 
 def posterize_with_outline(
-    input: Union[Path, str],
+    input_: Union[Path, str],
     output: Union[Path, str],
     luxs: Iterable[float],
     cols: Iterable[str],
     background: str,
-    stroke: str,
-    stroke_width: float,
-    speckle_size_scalar: Optional[float] = None,
+    strokes: Iterable[str],
+    stroke_widths: Iterable[float],
+    despeckle: Optional[float] = None,
 ):
     """A posterized effect a stroke around the silhouette."""
-    svg_layers = SvgLayers(input)
+    svg_layers = SvgLayers(input_)
     viewbox = {
         "x": 0,
         "y": 0,
@@ -87,10 +72,11 @@ def posterize_with_outline(
     for lux, col in zip(luxs, cols):
         if lux == 0.0:
             # create a layer for the stroke around the silhouette
-            layer = svg_layers(lux)
-            layer.attrib["stroke"] = stroke
-            layer.attrib["stroke-width"] = format_number(stroke_width)
-            root.append(layer)
+            for stroke, stroke_width in zip(strokes, stroke_widths):
+                layer = svg_layers(lux)
+                layer.attrib["stroke"] = stroke
+                layer.attrib["stroke-width"] = format_number(stroke_width)
+                root.append(layer)
 
         # fill in the dark areas
         layer = svg_layers(lux)
@@ -99,40 +85,7 @@ def posterize_with_outline(
 
     svg_layers.close()
     _ = write_svg(output, root)
+    _ = write_png_from_svg(INKSCAPE, output)
+    _ = sys.stdout.write(f"wrote {output}\n")
 
 
-def linear_interpolation(
-    input: Union[Path, str],
-    output: Union[Path, str],
-    num_layers: int,
-    black: str = "#000000",
-    white: str = "#ffffff",
-    stroke_shade: str = "#ff0000",
-) -> None:
-    """A default posterized effect.
-
-    :param input: The input png file.
-    :param output: The output svg file.
-    :param num_layers: The number of layers to use.
-    :param black: The color to use for the darkest layer.
-    :param white: The color to use for the lightest layer.
-    :param stroke_shade: The color to mix with the background to create the outline.
-
-    Will use a medium color for the background.
-    """
-    luxs = np.linspace(0, 1, num_layers + 1)[:-1]
-    cols = [_hex_interp(white, black, lux) for lux in luxs]
-    background = cols[len(cols) // 2]
-    stroke = _hex_interp(background, stroke_shade, 0.5)
-    stroke_width = 5
-    posterize_with_outline(input, output, luxs, cols, background, stroke, stroke_width)
-
-
-linear_interpolation(
-    BINARIES / "nnt_nobg.png",
-    BINARIES / "rendered_nnt.svg",
-    4,
-    "#660066",
-    "#ffccff",
-    "#ff0000",
-)
