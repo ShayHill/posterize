@@ -28,10 +28,15 @@ push_i and push_o give inverse results
 :created: 2023-08-01
 """
 
+from __future__ import annotations
+
 import itertools as it
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 
 def _average_floats(
@@ -52,12 +57,19 @@ def _average_floats(
 
 
 def linear(times: Iterable[float]) -> list[float]:
-    """This is a no-op. It returns the input."""
-    return [t for t in times]
+    """Return input as a list.
+
+    :param times: The times to return
+    :return: The times as a list
+
+    This is here in case I want to add a decorator or some additional transformation
+    later.
+    """
+    return list(times)
 
 
 def push_f(times: Sequence[float], strength: float = 1) -> list[float]:
-    """push_first, crowd values toward 0
+    """Crowd values toward 0.
 
     :param times: The times to distort. Float values (0.0, 1.0)
     :param strength: The strength of the distortion. 1.0 (default) is full distortion.
@@ -74,7 +86,7 @@ def push_f(times: Sequence[float], strength: float = 1) -> list[float]:
 
 
 def push_l(times: Sequence[float], strength: float = 1) -> list[float]:
-    """push_last, crowd values toward 1
+    """Crowd values toward 1.
 
     :param times: The times to distort. Float values (0.0, 1.0)
     :param strength: The strength of the distortion. 1.0 (default) is full distortion.
@@ -91,7 +103,7 @@ def push_l(times: Sequence[float], strength: float = 1) -> list[float]:
 
 
 def push_o(times: Sequence[float], strength: float = 1) -> list[float]:
-    """push_out, crowd values away from 0.5
+    """Crowd values toward 0 and 1.
 
     :param times: The times to distort. Float values (0.0, 1.0)
     :param strength: The strength of the distortion. 1.0 (default) is full distortion.
@@ -108,10 +120,10 @@ def push_o(times: Sequence[float], strength: float = 1) -> list[float]:
 
 
 def push_i(times: Sequence[float], strength: float = 1) -> list[float]:
-    """push_in, crowd values towards 0.5
+    """Crowd values towards 0.5.
 
-    :param times: The distorted times to reverse.
-    :param strength: The strength of the distortion. Should be the same as used in push_o function.
+    :param times: The distorted times to reverse
+    :param strength: The strength of the distortion. 1.0 (default) is full distortion.
     :return: The original times before distortion.
 
     push_i([0.00, 0.25, 0.50, 0.75, 1.00]) =>

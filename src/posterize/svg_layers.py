@@ -19,33 +19,30 @@ These layers can be layered over each other, lower lux to higher, to create a pi
 
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING
 
 from lxml import etree
 
-from posterize import image_arrays as ia
-from posterize import paths
+from posterize import image_arrays as ia, paths
 from posterize.constants import DEFAULT_MIN_SPECKLE_SIZE_SCALAR
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from lxml.etree import _Element as EtreeElement  # type: ignore
 
 
 class SvgLayers:
-    """Create necessary temp files then generate SVGs at different illumination
-    levels.
+    """Create necessary temp files then generate SVGs at different lux.
 
     Use with .close() or context manager to clean up temp files.
     """
 
     def __init__(
-        self,
-        input_filename: Union[str, Path],
-        despeckle: Optional[float] = None,
+        self, input_filename: str | Path, despeckle: float | None = None
     ) -> None:
         """Open a temporary directory and write temporary bmp files.
 
@@ -56,6 +53,7 @@ class SvgLayers:
         if despeckle is None:
             despeckle = DEFAULT_MIN_SPECKLE_SIZE_SCALAR
         self._tmpdir = tempfile.TemporaryDirectory()
+        self._tmpdir_path = Path(self._tmpdir.name)
         self._stem = Path(input_filename).stem
 
         pixels = ia.get_image_pixels(input_filename)
@@ -70,8 +68,8 @@ class SvgLayers:
         silhouette = paths.get_temp_bmp_filename(
             input_filename, paths.TempBmpInfix.SILHOUETTE
         )
-        self._monochrome = os.path.join(self._tmpdir.name, monochrome)
-        self._silhouette = os.path.join(self._tmpdir.name, silhouette)
+        self._monochrome = self._tmpdir_path / monochrome
+        self._silhouette = self._tmpdir_path / silhouette
         ia.write_monochrome_bmp(self._monochrome, pixels)
         ia.write_silhouette_bmp(self._silhouette, pixels)
 
@@ -80,21 +78,30 @@ class SvgLayers:
         self._tmpdir.cleanup()
 
     def __enter__(self) -> SvgLayers:
-        """Do nothing. Temp directory will open itself."""
+        """Do nothing. Temp directory will open itself.
+
+        :return: self
+        """
         return self
 
     def __exit__(
         self,
-        exc_type: Any,  # None | Type[Exception], but py <= 3.9 doesn't like it.
-        exc_value: Any,  # None | Exception, but py <= 3.9 doesn't like it.
-        exc_traceback: Any,  # None | TracebackType, but py <= 3.9 doesn't like it.
-    ):
+        exc_type: None | type[Exception],
+        exc_value: None | Exception,
+        exc_traceback: None | TracebackType,
+    ) -> None:
+        """Close the temporary directory."""
         self.close()
 
-    def _write_svg(self, illumination: float):
-        """Create an svg for a given illumination."""
+    def _write_svg(self, illumination: float) -> Path:
+        # TODO: replace all instances of the word illumination with lux
+        """Create an svg for a given illumination.
+
+        :param illumination: illumination level
+        :return: path to the output svg
+        """
         svg_filename = paths.get_temp_svg_filename(self._stem, illumination)
-        svg_path = os.path.join(self._tmpdir.name, svg_filename)
+        svg_path = self._tmpdir_path / svg_filename
         if illumination == 0:
             bitmap = self._silhouette
             blacklevel = 0.5
@@ -113,7 +120,7 @@ class SvgLayers:
             "-b", "svg",  # output format
         ]
         # fmt: on
-        _ = subprocess.run(command)
+        _ = subprocess.run(command, check=True)
         return svg_path
 
     def __call__(self, illumination: float) -> EtreeElement:

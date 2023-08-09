@@ -36,41 +36,52 @@ slightly unintuitive.
 :author: Shay Hill
 :created: 2023-07-11
 """
+from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
-from typing import Union, Optional, Iterable
-from svg_ultralight import new_svg_root, format_number, write_svg, new_sub_element, write_png_from_svg
+from typing import TYPE_CHECKING
+
+from svg_ultralight import (
+    format_number,
+    new_sub_element,
+    new_svg_root,
+    write_png_from_svg,
+    write_svg,
+)
 
 from posterize.svg_layers import SvgLayers
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 INKSCAPE = str(Path(r"C:\Program Files\Inkscape\bin\inkscape"))
 
+# show only the silhouette (any non-transparent pixels) when lux is at or below this
+_COMPLETE_DARKNESS = 0
+
+
 def posterize_with_outline(
-    input_: Union[Path, str],
-    output: Union[Path, str],
+    input_: Path | str,
+    output: Path | str,
     luxs: Iterable[float],
     cols: Iterable[str],
     background: str,
     strokes: Iterable[str],
     stroke_widths: Iterable[float],
-    despeckle: Optional[float] = None,
+    despeckle: float | None = None,
 ):
-    """A posterized effect a stroke around the silhouette."""
+    """A posterized effect with a stroke around the silhouette."""
     svg_layers = SvgLayers(input_)
-    viewbox = {
-        "x": 0,
-        "y": 0,
-        "width": svg_layers.width,
-        "height": svg_layers.height,
-    }
+    viewbox = {"x": 0, "y": 0, "width": svg_layers.width, "height": svg_layers.height}
 
     # new_svg_root takes trailing-underscore viewbox arguments
     root = new_svg_root(**{k + "_": v for k, v in viewbox.items()})
     _ = new_sub_element(root, "rect", **viewbox, fill=background)
 
     for lux, col in zip(luxs, cols):
-        if lux == 0.0:
+        if math.isclose(lux, _COMPLETE_DARKNESS):
             # create a layer for the stroke around the silhouette
             for stroke, stroke_width in zip(strokes, stroke_widths):
                 layer = svg_layers(lux)
@@ -87,5 +98,3 @@ def posterize_with_outline(
     _ = write_svg(output, root)
     _ = write_png_from_svg(INKSCAPE, output)
     _ = sys.stdout.write(f"wrote {output}\n")
-
-

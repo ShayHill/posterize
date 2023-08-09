@@ -4,16 +4,15 @@
 :created: 2023-08-01
 """
 
-import numpy as np
 from pathlib import Path
-from PIL import Image
-from typing import Union
 
-from posterize.paths import BINARIES
+import numpy as np
 from basic_colormath import hex_to_rgb, rgb_to_hex
-import posterize.time_distortions as dist
+from PIL import Image
 
+import posterize.time_distortions as dist
 from posterize.main import posterize_with_outline
+from posterize.paths import BINARIES
 
 
 def _hex_interp(hex_a: str, hex_b: str, time: float) -> str:
@@ -56,16 +55,19 @@ for s in np.linspace(0.25, 1, 3):
     time_sequences.append(dist.push_o(times, s))
 
 
+def _get_output_name(input_: Path | str, infix: str) -> Path:
+    """Create a custom output name so the input name can be reused.
 
-
-def _get_output_name(input_: Union[Path, str], infix: str) -> Path:
-    """Create a custom output name so the input name can be reused."""
+    :param input_: The input file name.
+    :param infix: The infix to add to the output name.
+    :return: path to output_infix.svg.
+    """
     input_ = Path(input_)
     output = input_.parent / f"rendered_{input_.stem}_{infix}.svg"
     return output
 
 
-def try_lots(input_: Union[Path, str]):
+def try_lots(input_: Path | str):
     image = Image.open(input_)
     pinstripe_width = image.height * _PINSTRIPE_SCALE
     stroke_width = image.height * _STROKE_SCALE

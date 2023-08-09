@@ -6,7 +6,6 @@
 
 import enum
 from pathlib import Path
-from typing import Union
 
 _PROJECT = Path(__file__, "../../..").resolve()
 BINARIES = _PROJECT / "binaries"
@@ -20,7 +19,7 @@ class TempBmpInfix(enum.Enum):
     SILHOUETTE = "_silhouette"
 
 
-def get_temp_bmp_filename(input_filename: Union[Path, str], infix: TempBmpInfix) -> str:
+def get_temp_bmp_filename(input_filename: Path | str, infix: TempBmpInfix) -> str:
     """Create a path to a bitmap temp file.
 
     :param input_filename: the filename of an input file, the path to the input file,
@@ -35,7 +34,7 @@ def get_temp_bmp_filename(input_filename: Union[Path, str], infix: TempBmpInfix)
     return f"{stem}{infix.value}.bmp"
 
 
-def get_temp_svg_filename(filename: Union[Path, str], illumination: float) -> str:
+def get_temp_svg_filename(filename: Path | str, illumination: float) -> str:
     """Create a path to an svg temp file.
 
     :param filename: the filename of an input file, the path to the input file, or

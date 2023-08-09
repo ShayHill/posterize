@@ -12,7 +12,7 @@ Potrace needs two bitmap images to create vectors for a layered svg:
 """
 
 from pathlib import Path
-from typing import Annotated, Union
+from typing import Annotated
 
 import numpy as np
 import numpy.typing as npt
@@ -30,27 +30,29 @@ _RgbPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 3)]
 _BIG_INT = 2**24 - 1
 
 
-def _float_array_to_uint8(array: npt.NDArray[np.float64]) -> npt.NDArray[np.uint8]:
-    """Convert an array of floats [0.0, 255.0] to an array of uint8 [0, 255]."""
-    as_uint32 = (array * _BIG_INT).astype(np.uint32)
+def _float_array_to_uint8(floats: npt.NDArray[np.float_]) -> npt.NDArray[np.uint8]:
+    """Convert an array of floats [0.0, 255.0] to an array of uint8 [0, 255].
+
+    :param array: array of floats
+    :return: array of uint8
+    """
+    as_uint32 = (floats * _BIG_INT).astype(np.uint32)
     return np.right_shift(as_uint32, 24).astype(np.uint8)
 
 
-def get_image_pixels(filename: Union[Path, str]) -> _RgbaPixels:
+def get_image_pixels(filename: Path | str) -> _RgbaPixels:
     """Get colors from a quantized image.
 
     :param filename: path to an image, presumable a png with transparency
     :return: array with shape (-1, -1, 4) of uint8 values
     """
+    # TODO: convert to LA instead of RGBA
     image = Image.open(filename)
     image = image.convert("RGBA")
     return np.array(image)
 
 
-def _write_bitmap_from_array(
-    pixels: _RgbPixels,
-    filename: Union[Path, str],
-) -> None:
+def _write_bitmap_from_array(pixels: _RgbPixels, filename: Path | str) -> None:
     """Create a bitmap file from an nxn array of pixel colors.
 
     :param pixels: (-1, -1, 3) array of rgb unit8 values
@@ -61,7 +63,7 @@ def _write_bitmap_from_array(
     image.save(Path(filename).with_suffix(".bmp"))
 
 
-def write_silhouette_bmp(path: str, pixels: _RgbaPixels) -> None:
+def write_silhouette_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
     """Use the alpha channel of each pixel to create a black / white bmp file.
 
     :param path: path to output file
@@ -86,7 +88,7 @@ def _add_white_background(pixels: _RgbaPixels) -> _RgbPixels:
     return np.array(new_image.convert("RGB"))
 
 
-def write_monochrome_bmp(path: str, pixels: _RgbaPixels) -> None:
+def write_monochrome_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
     """Use the color channels of each pixel to create a grayscale bmp file.
 
     :param path: path to output file

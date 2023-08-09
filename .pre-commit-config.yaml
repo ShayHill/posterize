@@ -85,7 +85,7 @@ repos:
   rev: v3.3.1
   hooks:
   - args:
-    - --py39-plus
+    - --py310-plus
     id: pyupgrade
 
 - repo: https://github.com/Lucas-C/pre-commit-hooks
@@ -105,7 +105,7 @@ repos:
     exclude: "tests"
     name: pylint
     args:
-    - --good-names=i,j,_,f
+    - --good-names=i,j,_,f,r,g,b,q1,q4
     - --disable=protected-access
     - --disable=no-member
     - --disable=import-error
@@ -140,6 +140,7 @@ repos:
       args:
       - --select=ALL
       - --ignore=ANN101,ANN102,ANN201,ANN202,B905,COM812,D203,D213,I001,ISC003,N802,N806,PGH003,PLR0913,PTH108
+      - --target-version=py310
       # - --fix
 
 # reads pyproject.toml for additional config
