@@ -1,7 +1,8 @@
 """Create one svg layer with potrace.
 
-Define a class that creates svg layers (group elements) with a given illumination. A
-special case, lux == 0, returns an svg path around all opaque pixels.
+Define a class that creates svg layers (group elements) with a given lux
+(illumination from [0, 1]). A special case, lux == 0, returns an svg path around all
+opaque pixels.
 
 This requires writing temporary bmp and svg files to disk in a TemporaryDirectory.
 
@@ -19,11 +20,14 @@ These layers can be layered over each other, lower lux to higher, to create a pi
 
 from __future__ import annotations
 
+import math
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
+import numpy as np
+import numpy.typing as npt
 from lxml import etree
 
 from posterize import image_arrays as ia, paths
@@ -33,6 +37,9 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from lxml.etree import _Element as EtreeElement  # type: ignore
+
+# a pixel array of any mode (RGB, RGBA, L, etc.)
+_Pixels = Annotated[npt.NDArray[np.uint8], (-1, -1, -1)]
 
 
 class SvgLayers:
@@ -52,30 +59,43 @@ class SvgLayers:
         """
         if despeckle is None:
             despeckle = DEFAULT_MIN_SPECKLE_SIZE_SCALAR
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self._tmpdir_path = Path(self._tmpdir.name)
+
+        self._tmpdir_object = tempfile.TemporaryDirectory()
+        self._tmpdir_path = Path(self._tmpdir_object.name)
         self._stem = Path(input_filename).stem
 
         pixels = ia.get_image_pixels(input_filename)
+        self._monochrome = self._write_monochrome(pixels)
+        self._silhouette = self._write_silhouette(pixels)
+
         self.height, self.width = pixels.shape[:2]
-        self.min_dim = min(self.height, self.width)
+        self._tsize = min(self.width, self.height) * despeckle
 
-        self._tsize = self.min_dim * despeckle
+    def _write_monochrome(self, pixels: _Pixels) -> Path:
+        """Create a temporart monochrome bitmap for potrace.
 
-        monochrome = paths.get_temp_bmp_filename(
-            input_filename, paths.TempBmpInfix.MONOCHROME
-        )
-        silhouette = paths.get_temp_bmp_filename(
-            input_filename, paths.TempBmpInfix.SILHOUETTE
-        )
-        self._monochrome = self._tmpdir_path / monochrome
-        self._silhouette = self._tmpdir_path / silhouette
-        ia.write_monochrome_bmp(self._monochrome, pixels)
-        ia.write_silhouette_bmp(self._silhouette, pixels)
+        :param pixels: image pixels
+        :return: path to temporary monochrome bitmap
+        """
+        infix = paths.TempBmpInfix.MONOCHROME
+        bmp_path = self._tmpdir_path / paths.get_temp_bmp_filename(self._stem, infix)
+        ia.write_monochrome_bmp(bmp_path, pixels)
+        return bmp_path
+
+    def _write_silhouette(self, pixels: _Pixels) -> Path:
+        """Create a temporart silhouette bitmap for potrace.
+
+        :param pixels: image pixels
+        :return: path to temporary silhouette bitmap
+        """
+        infix = paths.TempBmpInfix.SILHOUETTE
+        bmp_path = self._tmpdir_path / paths.get_temp_bmp_filename(self._stem, infix)
+        ia.write_silhouette_bmp(bmp_path, pixels)
+        return bmp_path
 
     def close(self) -> None:
         """Close the temporary directory."""
-        self._tmpdir.cleanup()
+        self._tmpdir_object.cleanup()
 
     def __enter__(self) -> SvgLayers:
         """Do nothing. Temp directory will open itself.
@@ -94,15 +114,13 @@ class SvgLayers:
         self.close()
 
     def _write_svg(self, lux: float) -> Path:
-        # TODO: replace all instances of the word illumination with lux
         """Create an svg for a given illumination.
 
         :param lux: illumination level
         :return: path to the output svg
         """
-        svg_filename = paths.get_temp_svg_filename(self._stem, lux)
-        svg_path = self._tmpdir_path / svg_filename
-        if lux == 0:
+        svg_path = self._tmpdir_path / paths.get_temp_svg_filename(self._stem, lux)
+        if math.isclose(lux, 0):
             bitmap = self._silhouette
             blacklevel = 0.5
         else:
@@ -126,8 +144,8 @@ class SvgLayers:
     def __call__(self, lux: float) -> EtreeElement:
         """Get the svg group for a given illumination.
 
-        :param illumination: output svg paths will wrap pixels darker than
-            (1 - illumination).
+        :param lux: output svg paths will wrap pixels darker than
+            (1 - lux).
         :return: An svg group element. The group element contains path elements. Each
             path element surrounds a black area in the image.
 
@@ -137,7 +155,9 @@ class SvgLayers:
         <element tree>
             <root>
                 <metadata></metadata>
-                <g></g>
+                <g>
+                    <path></path>
+                </g>
             </root>
         </element tree>
         ```

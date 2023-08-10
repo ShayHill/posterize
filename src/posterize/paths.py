@@ -34,17 +34,17 @@ def get_temp_bmp_filename(input_filename: Path | str, infix: TempBmpInfix) -> st
     return f"{stem}{infix.value}.bmp"
 
 
-def get_temp_svg_filename(filename: Path | str, illumination: float) -> str:
+def get_temp_svg_filename(filename: Path | str, lux: float) -> str:
     """Create a path to an svg temp file.
 
     :param filename: the filename of an input file, the path to the input file, or
         any string you'd like to use as a filename stem.
-    :param illumination: the illumination passed to potrace to create the svg.
+    :param lux: the lux passed to potrace to create the svg.
     :returns: path to an existing or to-be-created svg file
 
-    Filename will include the illumination value rounded to two digits, e.g.,
+    Filename will include the lux value rounded to two digits, e.g.,
     "my_file_0_50.svg"
     """
     stem = Path(filename).stem
-    infix = f"{illumination:0.2f}".replace(".", "_")
+    infix = f"{lux:0.2f}".replace(".", "_")
     return f"{stem}_{infix}.svg"
