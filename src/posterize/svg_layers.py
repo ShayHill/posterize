@@ -1,7 +1,7 @@
 """Create one svg layer with potrace.
 
 Define a class that creates svg layers (group elements) with a given illumination. A
-special case, illumination == 0, returns an svg path around all opaque pixels.
+special case, lux == 0, returns an svg path around all opaque pixels.
 
 This requires writing temporary bmp and svg files to disk in a TemporaryDirectory.
 
@@ -93,21 +93,21 @@ class SvgLayers:
         """Close the temporary directory."""
         self.close()
 
-    def _write_svg(self, illumination: float) -> Path:
+    def _write_svg(self, lux: float) -> Path:
         # TODO: replace all instances of the word illumination with lux
         """Create an svg for a given illumination.
 
-        :param illumination: illumination level
+        :param lux: illumination level
         :return: path to the output svg
         """
-        svg_filename = paths.get_temp_svg_filename(self._stem, illumination)
+        svg_filename = paths.get_temp_svg_filename(self._stem, lux)
         svg_path = self._tmpdir_path / svg_filename
-        if illumination == 0:
+        if lux == 0:
             bitmap = self._silhouette
             blacklevel = 0.5
         else:
             bitmap = self._monochrome
-            blacklevel = 1 - illumination
+            blacklevel = 1 - lux
         # fmt: off
         command = [
             str(paths.POTRACE),
@@ -123,7 +123,7 @@ class SvgLayers:
         _ = subprocess.run(command, check=True)
         return svg_path
 
-    def __call__(self, illumination: float) -> EtreeElement:
+    def __call__(self, lux: float) -> EtreeElement:
         """Get the svg group for a given illumination.
 
         :param illumination: output svg paths will wrap pixels darker than
@@ -142,6 +142,6 @@ class SvgLayers:
         </element tree>
         ```
         """
-        svg_path = self._write_svg(illumination)
+        svg_path = self._write_svg(lux)
         root = etree.parse(str(svg_path)).getroot()
         return root[1]
