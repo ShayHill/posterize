@@ -14,6 +14,8 @@ import posterize.time_distortions as dist
 from posterize.main import posterize_with_outline
 from posterize.paths import BINARIES
 
+_INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
+
 
 def _hex_interp(hex_a: str, hex_b: str, time: float) -> str:
     """Interpolate between two hex colors.
@@ -29,12 +31,12 @@ def _hex_interp(hex_a: str, hex_b: str, time: float) -> str:
     return rgb_to_hex((r, g, b))
 
 
-# _BG_COLOR = "#ac58fc"  # Sebastian's purple
-_BG_COLOR = "#b266b2"
-_PINSTRIPE_SCALE = 0.015
-_STROKE_SCALE = 0.01
-_PINSTRIPE_COLOR = _hex_interp(_BG_COLOR, "#ff0000", 0.6)
-_STROKE_COLOR = _hex_interp(_BG_COLOR, "#ffffff", 0.4)
+_BG_COLOR = "#ac58fc"  # Sebastian's purple
+# _BG_COLOR = "#b266b2"
+_PINSTRIPE_SCALE = 0.015 * 2
+_STROKE_SCALE = 0.01 * 2
+_PINSTRIPE_COLOR = "#ff0000"
+_STROKE_COLOR = "#ffbb55"
 
 _COLOR_STEPS = 5
 
@@ -53,6 +55,8 @@ for s in np.linspace(0.25, 1, 3):
     time_sequences.append(dist.push_l(times, s))
     time_sequences.append(dist.push_i(times, s))
     time_sequences.append(dist.push_o(times, s))
+
+time_sequences = time_sequences[:1]
 
 
 def _get_output_name(input_: Path | str, infix: str) -> Path:
@@ -81,9 +85,20 @@ def try_lots(input_: Path | str):
             _get_output_name(input_, str(i)),
             luxs,
             cols,
-            _BG_COLOR,
-            (_PINSTRIPE_COLOR, _STROKE_COLOR),
-            (pinstripe_width, stroke_width),
+            background=_BG_COLOR,
+            inkscape=_INKSCAPE,
+            strokes=[
+                {
+                    "stroke": _PINSTRIPE_COLOR,
+                    "stroke-width": str(pinstripe_width),
+                    "stroke-opacity": "0.7",
+                },
+                {
+                    "stroke": _STROKE_COLOR,
+                    "stroke-width": stroke_width,
+                    "stroke-opacity": "0.7",
+                },
+            ],
         )
 
 
