@@ -62,6 +62,15 @@ if TYPE_CHECKING:
 
 _SvgArgs = dict[str, str | float]
 
+# svg arguments needed to black out an element
+_BLACKOUT = {
+    "fill": "black",
+    "stroke": "black",
+    "opacity": "1",
+    "fill-opacity": "1",
+    "stroke-opacity": "1",
+}
+
 # show only the silhouette (any non-transparent pixels) when lux is at or below this
 _COMPLETE_DARKNESS = 0
 
@@ -89,23 +98,27 @@ def _copy_elem(elem: EtreeElement, **kwargs: str | float) -> EtreeElement:
     return update_element(copy_of_elem, **kwargs)
 
 
-def _blackout_copy(elem: EtreeElement, **kwargs: str | float) -> EtreeElement:
-    """Copy an element and make it black.
+def _new_stroke_masks(
+    strokes: Sequence[_SvgArgs], bg_elem: EtreeElement, fg_elem: EtreeElement
+):
+    """Create a mask for each stroke.
 
-    :param elem: the element to copy
-    :param kwargs: element attributes to add or update
-    :return: the copy
+    :param strokes: the strokes to mask
+    :param bg_elem: the background element (to be shown)
+    :param fg_elem: the foreground element (to be hidden)
+    :return: the mask elements
+
+    Strokes around the sihouette should be provided widest (by stroke-width) to
+    narrowest. Higher strokes mask lower strokes to allow multiple
+    semi-transparent strokes without blending.
     """
-    kwargs.update(
-        {
-            "fill": "black",
-            "stroke": "black",
-            "opacity": "1",
-            "fill-opacity": "1",
-            "stroke-opacity": "1",
-        }
-    )
-    return _copy_elem(elem, **kwargs)
+    masks: list[EtreeElement] = []
+    for i, stroke in enumerate(strokes[1:], start=1):
+        masks.append(new_element("mask", id_=_get_stroke_id(i)))
+        show = _copy_elem(bg_elem, fill="white")
+        hide = _copy_elem(fg_elem, **{**stroke, **_BLACKOUT, "transform": "none"})
+        masks[-1].extend([show, hide])
+    return masks
 
 
 def posterize_with_outline(
@@ -163,21 +176,13 @@ def posterize_with_outline(
     with SvgLayers(input_, despeckle) as svg_layers:
         elems = [svg_layers(x) for x in luxs]
         width, height = svg_layers.width, svg_layers.height
+    bg_elem = new_element("rect", x=0, y=0, width=width, height=height)
 
-    viewbox = {"x": 0, "y": 0, "width": width, "height": height}
-    bg_elem = new_element("rect", **viewbox)
+    root = new_svg_root(x_=0, y_=0, width_=width, height_=height)
 
-    # new_svg_root takes trailing-underscore viewbox arguments
-    root = new_svg_root(**{k + "_": v for k, v in viewbox.items()})
-
-    # define masks to allow multiple semi-transparent strokes
+    # define masks for strokes around the silhouette
     defs = new_sub_element(root, "defs")
-    for i, stroke in enumerate(strokes[1:], start=1):
-        show = _copy_elem(bg_elem, fill="white")
-        hide = _copy_elem(elems[0], **stroke)
-        hide = _blackout_copy(hide, transform="none")
-        mask = new_sub_element(defs, "mask", id_=_get_stroke_id(i))
-        mask.extend([show, hide])
+    defs.extend(_new_stroke_masks(strokes, bg_elem, elems[0]))
 
     # add background if color provided
     if background:

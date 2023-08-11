@@ -14,6 +14,8 @@ import posterize.time_distortions as dist
 from posterize.main import posterize_with_outline
 from posterize.paths import BINARIES
 
+
+
 _INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
 
 
