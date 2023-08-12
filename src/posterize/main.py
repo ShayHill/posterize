@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lxml import etree
+from paragraphs import par
 from svg_ultralight import (
     new_element,
     new_sub_element,
@@ -70,9 +71,6 @@ _BLACKOUT = {
     "fill-opacity": "1",
     "stroke-opacity": "1",
 }
-
-# show only the silhouette (any non-transparent pixels) when lux is at or below this
-_COMPLETE_DARKNESS = 0
 
 
 def _get_stroke_id(i: int) -> str:
@@ -113,11 +111,15 @@ def _new_stroke_masks(
     semi-transparent strokes without blending.
     """
     masks: list[EtreeElement] = []
-    for i, stroke in enumerate(strokes[1:], start=1):
+    for i in range(len(strokes)):
         masks.append(new_element("mask", id_=_get_stroke_id(i)))
         show = _copy_elem(bg_elem, fill="white")
-        hide = _copy_elem(fg_elem, **{**stroke, **_BLACKOUT, "transform": "none"})
-        masks[-1].extend([show, hide])
+        if i == len(strokes) - 1:
+            masks[-1].append(show)
+        else:
+            above = strokes[i + 1]
+            hide = _copy_elem(fg_elem, **{**above, **_BLACKOUT, "transform": "none"})
+            masks[-1].extend([show, hide])
     return masks
 
 
@@ -189,10 +191,9 @@ def posterize_with_outline(
         root.append(_copy_elem(bg_elem, fill=background))
 
     # add any strokes around the silhouette
-    for next_i, stroke in enumerate(strokes, start=1):
+    for i, stroke in enumerate(strokes):
         stroke_elem = _copy_elem(elems[0], **stroke)
-        if next_i < len(strokes):
-            stroke_elem.attrib["mask"] = f"url(#{_get_stroke_id(next_i)})"
+        stroke_elem.attrib["mask"] = f"url(#{_get_stroke_id(i)})"
         root.append(stroke_elem)
 
     # draw the layered svg paths
@@ -200,6 +201,17 @@ def posterize_with_outline(
         root.append(update_element(elem, fill=col))
 
     _ = write_svg(output, root)
-    if inkscape and Path(inkscape).exists():
-        _ = write_png_from_svg(inkscape, output)
+    if inkscape:
+        try:
+            _ = write_png_from_svg(inkscape, output)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                par(
+                    f"""This is a pretty broad error when calling write_png_from_svg,
+                    but I'm guessing the path to your Inkscape executable is wrong.
+                    If you're sure it's there, try passing it without the *.exe
+                    extension.\n"""
+                )
+            )
+            raise
     _ = sys.stdout.write(f"wrote {output}\n")
