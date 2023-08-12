@@ -18,41 +18,25 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
-from posterize.constants import RGB_CONTRIB_TO_GRAY
+# a monochrome image with alpha
+_LaPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 2)]
 
-# a colored image with alpha
-_RgbaPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 4)]
-
-# a colored image with no alpha
-_RgbPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 3)]
-
-# cache this number for float to int conversion
-_BIG_INT = 2**24 - 1
+# a monochrome image with no alpha channel
+_LPixels = Annotated[npt.NDArray[np.uint8], (-1, -1)]
 
 
-def _float_array_to_uint8(floats: npt.NDArray[np.float_]) -> npt.NDArray[np.uint8]:
-    """Convert an array of floats [0.0, 255.0] to an array of uint8 [0, 255].
-
-    :param array: array of floats
-    :return: array of uint8
-    """
-    as_uint32 = (floats * _BIG_INT).astype(np.uint32)
-    return np.right_shift(as_uint32, 24).astype(np.uint8)
-
-
-def get_image_pixels(filename: Path | str) -> _RgbaPixels:
-    """Get colors from a quantized image.
+def get_image_pixels(filename: Path | str) -> _LaPixels:
+    """Get gray and alpha levels from a (presumably rgba) image.
 
     :param filename: path to an image, presumable a png with transparency
-    :return: array with shape (-1, -1, 4) of uint8 values
+    :return: array with shape (-1, -1, 2) of uint8 values
     """
-    # TODO: convert to LA instead of RGBA
     image = Image.open(filename)
-    image = image.convert("RGBA")
+    image = image.convert("LA")
     return np.array(image)
 
 
-def _write_bitmap_from_array(pixels: _RgbPixels, filename: Path | str) -> None:
+def _write_bitmap_from_array(pixels: _LPixels, filename: Path | str) -> None:
     """Create a bitmap file from an nxn array of pixel colors.
 
     :param pixels: (-1, -1, 3) array of rgb unit8 values
@@ -63,7 +47,7 @@ def _write_bitmap_from_array(pixels: _RgbPixels, filename: Path | str) -> None:
     image.save(Path(filename).with_suffix(".bmp"))
 
 
-def write_silhouette_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
+def write_silhouette_bmp(path: str | Path, pixels: _LaPixels) -> None:
     """Use the alpha channel of each pixel to create a black / white bmp file.
 
     :param path: path to output file
@@ -71,24 +55,23 @@ def write_silhouette_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
 
     All transparency will be white. All opaque pixels will be black.
     """
-    alphas = (255 - pixels[:, :, 3]).astype(np.uint8)
-    bmp_pixels = np.repeat(alphas[:, :, np.newaxis], 3, axis=2)
-    _write_bitmap_from_array(bmp_pixels, path)
+    alphas = (255 - pixels[:, :, 1]).astype(np.uint8)
+    _write_bitmap_from_array(alphas, path)
 
 
-def _add_white_background(pixels: _RgbaPixels) -> _RgbPixels:
+def _add_white_background(pixels: _LaPixels) -> _LaPixels:
     """Replace transparency with white.
 
     :param pixels: array of pixels shape (m, n, 4) [0, 255]
     :return: array of pixels shape (m, n, 3) [0, 255]
     """
-    image = Image.fromarray(pixels, mode="RGBA")  # type: ignore
-    new_image = Image.new("RGBA", image.size, "WHITE")
+    image = Image.fromarray(pixels, mode="LA")  # type: ignore
+    new_image = Image.new("LA", image.size, "WHITE")
     new_image.paste(image, mask=image)
-    return np.array(new_image.convert("RGB"))
+    return np.array(new_image)
 
 
-def write_monochrome_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
+def write_monochrome_bmp(path: str | Path, pixels: _LaPixels) -> None:
     """Use the color channels of each pixel to create a grayscale bmp file.
 
     :param path: path to output file
@@ -97,6 +80,4 @@ def write_monochrome_bmp(path: str | Path, pixels: _RgbaPixels) -> None:
     Replace transparent background with white.
     """
     pixels_ = _add_white_background(pixels)
-    grays = _float_array_to_uint8(np.dot(pixels_, RGB_CONTRIB_TO_GRAY))
-    bmp_pixels = np.repeat(grays[:, :, np.newaxis], 3, axis=2)
-    _write_bitmap_from_array(bmp_pixels, path)
+    _write_bitmap_from_array(pixels_[:, :, 0], path)
