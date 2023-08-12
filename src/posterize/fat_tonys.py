@@ -9,11 +9,15 @@ from pathlib import Path
 import numpy as np
 from basic_colormath import hex_to_rgb, rgb_to_hex
 from PIL import Image
+from typing import Iterable, Sequence
+import itertools as it
 
 import posterize.time_distortions as dist
 from posterize.main import posterize_with_outline
 from posterize.paths import BINARIES
+from posterize.svg_layers import get_quantizer
 
+_SOURCE = BINARIES / "nnt_nobg.png"
 
 
 _INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
@@ -49,16 +53,32 @@ _COLOR_STEPS = 5
 # ==============================================================================
 
 # re-use these for any image
-times = list(np.linspace(0, 1, _COLOR_STEPS, endpoint=False))
-time_sequences = [dist.linear(times)]
 
-for s in np.linspace(0.25, 1, 3):
-    time_sequences.append(dist.push_f(times, s))
-    time_sequences.append(dist.push_l(times, s))
-    time_sequences.append(dist.push_i(times, s))
-    time_sequences.append(dist.push_o(times, s))
 
-time_sequences = time_sequences[:1]
+def _get_distorted_time_sequences(
+    path_to_image: str | Path,
+    distortion_strengths: Iterable[float],
+) -> list[list[float]]:
+    """Get a list of time sequences with different distortions.
+    
+    :param path_to_image: path to an image file
+    :param distortion_strengths: [0, 1] how much to distort the time sequences
+    :return: list of time sequences.
+    """
+    get_quantile = get_quantizer(_SOURCE)
+    times = list(np.linspace(0, 1, _COLOR_STEPS, endpoint=False))
+    q_times = [get_quantile(x) for x in times]
+
+    base_time_sequences = [dist.linear(times), dist.linear(q_times)]
+    distortions = (dist.push_f, dist.push_o, dist.push_i, dist.push_l)
+
+    time_sequences = base_time_sequences[:]
+    for d, s, ts in it.product(distortions, distortion_strengths, base_time_sequences):
+        time_sequences.append(d(ts, s))
+    return time_sequences
+
+
+time_sequences = _get_distorted_time_sequences(_SOURCE, np.linspace(0.25, 1, 3))
 
 
 def _get_output_name(input_: Path | str, infix: str) -> Path:
