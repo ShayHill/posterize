@@ -11,13 +11,18 @@ Potrace needs two bitmap images to create vectors for a layered svg:
 :created: 2023-07-06
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Annotated, Iterable
+from typing import TYPE_CHECKING, Annotated
 
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
 from stacked_quantile import get_stacked_quantile
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # a monochrome image with alpha
 _LaPixels = Annotated[npt.NDArray[np.uint8], (-1, -1, 2)]

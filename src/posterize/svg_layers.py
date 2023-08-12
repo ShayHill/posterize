@@ -23,21 +23,22 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from lxml import etree
+from stacked_quantile import get_stacked_quantile
 
 from posterize import image_arrays as ia, paths
 from posterize.constants import DEFAULT_MIN_SPECKLE_SIZE_SCALAR
-from stacked_quantile import get_stacked_quantile
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import TracebackType
 
     from lxml.etree import _Element as EtreeElement  # type: ignore
 
 
-def get_quantizer(path_to_image: str | Path) -> Callable[[float], float]:
+def get_quantiler(path_to_image: str | Path) -> Callable[[float], float]:
     """Create a function to return a quantile of pixel graylevels in [0, 1].
 
     :param path_to_image: path to an image file
@@ -49,8 +50,7 @@ def get_quantizer(path_to_image: str | Path) -> Callable[[float], float]:
     vs, ws = ia.quantize_pixels(pixels)
 
     def _get_quantile(q: float) -> float:
-        """"""
-        """Get the quantile of the image gray levels
+        """Get the quantile of the image gray levels.
 
         :param q: quantile [0, 1]
         :return: quantile value ratio [0, 1]
@@ -110,9 +110,7 @@ class SvgLayers:
     """
 
     def __init__(
-        self,
-        path_to_image: str | Path,
-        despeckle: float | None = None
+        self, path_to_image: str | Path, despeckle: float | None = None
     ) -> None:
         """Open a temporary directory and write temporary bmp files.
 

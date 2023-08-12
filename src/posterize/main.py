@@ -39,7 +39,6 @@ slightly unintuitive.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lxml import etree
@@ -57,6 +56,7 @@ from posterize.svg_layers import SvgLayers
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+    from pathlib import Path
 
     from lxml.etree import _Element as EtreeElement  # type: ignore
 
@@ -98,7 +98,7 @@ def _copy_elem(elem: EtreeElement, **kwargs: str | float) -> EtreeElement:
 
 def _new_stroke_masks(
     strokes: Sequence[_SvgArgs], bg_elem: EtreeElement, fg_elem: EtreeElement
-):
+) -> list[EtreeElement]:
     """Create a mask for each stroke.
 
     :param strokes: the strokes to mask
@@ -204,14 +204,13 @@ def posterize_with_outline(
     if inkscape:
         try:
             _ = write_png_from_svg(inkscape, output)
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
             raise FileNotFoundError(
                 par(
-                    f"""This is a pretty broad error when calling write_png_from_svg,
+                    """This is a pretty broad error when calling write_png_from_svg,
                     but I'm guessing the path to your Inkscape executable is wrong.
                     If you're sure it's there, try passing it without the *.exe
                     extension.\n"""
                 )
-            )
-            raise
+            ) from exc
     _ = sys.stdout.write(f"wrote {output}\n")
