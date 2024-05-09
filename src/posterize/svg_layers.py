@@ -144,9 +144,9 @@ class SvgLayers:
 
     def __exit__(
         self,
-        exc_type: None | type[Exception],
-        exc_value: None | Exception,
-        exc_traceback: None | TracebackType,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        exc_traceback: TracebackType | None,
     ) -> None:
         """Close the temporary directory."""
         self.close()

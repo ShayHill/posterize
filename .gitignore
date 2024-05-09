@@ -1,1 +1,3 @@
-binaries/*
+Update-PythonVenv.ps1
+requirements.txt
+dev-requirements.txt

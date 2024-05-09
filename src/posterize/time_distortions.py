@@ -52,7 +52,7 @@ def _average_floats(
     """
     min_val = min(it.chain(floats_a, floats_b))
     max_val = max(it.chain(floats_a, floats_b))
-    interpolated = [a + (b - a) * time for a, b in zip(floats_a, floats_b)]
+    interpolated = [a + (b - a) * time for a, b in zip(floats_a, floats_b, strict=True)]
     return list(np.clip(interpolated, min_val, max_val))
 
 

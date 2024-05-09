@@ -34,7 +34,7 @@ _LPixels = Annotated[npt.NDArray[np.uint8], (-1, -1)]
 def quantize_pixels(
     pixels: _LaPixels,
 ) -> tuple[
-    Annotated[npt.NDArray[np.float_], (-1,)], Annotated[npt.NDArray[np.float_], (-1,)]
+    Annotated[npt.NDArray[np.float64], (-1,)], Annotated[npt.NDArray[np.float64], (-1,)]
 ]:
     """Quantize pixels to uint8 values and weights per value.
 
@@ -52,8 +52,8 @@ def quantize_pixels(
         accumulated_weights[int(value)] += weight
     # fmt: off
     return (
-        np.array(tuple(range(256)), dtype=np.float_),
-        np.array(accumulated_weights, dtype=np.float_)
+        np.array(tuple(range(256)), dtype=np.float64),
+        np.array(accumulated_weights, dtype=np.float64)
     )
     # fmt: on
 
@@ -104,7 +104,7 @@ def _write_bitmap_from_array(pixels: _LPixels, filename: Path | str) -> None:
     :param filename: path to output bitmap (will end up with extension .bmp)
     :effects: writes a bitmap to the filesystem
     """
-    image = Image.fromarray(pixels)  # type: ignore
+    image = Image.fromarray(pixels)
     image.save(Path(filename).with_suffix(".bmp"))
 
 
@@ -126,7 +126,7 @@ def _add_white_background(pixels: _LaPixels) -> _LaPixels:
     :param pixels: array of pixels shape (m, n, 4) [0, 255]
     :return: array of pixels shape (m, n, 3) [0, 255]
     """
-    image = Image.fromarray(pixels, mode="LA")  # type: ignore
+    image = Image.fromarray(pixels, mode="LA")
     new_image = Image.new("LA", image.size, "WHITE")
     new_image.paste(image, mask=image)
     return np.array(new_image)

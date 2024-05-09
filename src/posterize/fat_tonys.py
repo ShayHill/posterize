@@ -130,7 +130,7 @@ def _get_output_name(path_to_image: Path | str, infix: str) -> Path:
     return path_to_image.parent / f"rendered_{path_to_image.stem}_{infix}.svg"
 
 
-def produce_candidate_images(path_to_image: Path | str):
+def produce_candidate_images(path_to_image: Path | str) -> None:
     """Write several candidate SVGs (and optionally PNGs) to disk.
 
     :param path_to_image: path to an image file
