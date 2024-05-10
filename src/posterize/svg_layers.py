@@ -174,6 +174,7 @@ class SvgLayers:
             "--flat",  # all paths combined in one element
             "-t", str(self._tsize),  # remove speckles
             "-b", "svg",  # output format
+            "--opttolerance", "2.8", # higher values make paths smoother
         ]
         # fmt: on
         _ = subprocess.run(command, check=True)

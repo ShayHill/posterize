@@ -7,9 +7,15 @@
 import enum
 from pathlib import Path
 
-_PROJECT = Path(__file__, "../../..").resolve()
-BINARIES = _PROJECT / "binaries"
+PROJECT = Path(__file__, "../../..").resolve()
+BINARIES = PROJECT / "binaries"
 POTRACE = BINARIES / "potrace.exe"
+
+# hold intermediate images used for calculations
+WORKING = BINARIES / "working"
+
+for directory in (BINARIES, WORKING):
+    directory.mkdir(parents=True, exist_ok=True)
 
 
 class TmpBmpInfix(enum.Enum):
