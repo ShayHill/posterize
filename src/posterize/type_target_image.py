@@ -4,29 +4,30 @@
 :created: 2024-05-09
 """
 
-
-from posterize.image_arrays import get_image_pixels, write_monochrome_bmp, _write_bitmap_from_array
-from posterize.svg_layers import SvgLayers
-from svg_ultralight.strings import svg_color_tuple
-from pathlib import Path
-import numpy.typing as npt
-import numpy as np
-from PIL import Image
-from lxml import etree
-from lxml.etree import _Element as EtreeElement  # type: ignore
-from svg_ultralight import write_root
-from posterize.paths import WORKING, PROJECT
 import itertools as it
+from pathlib import Path
+
+import numpy as np
+import numpy.typing as npt
 from basic_colormath import get_delta_e
-
-from svg_ultralight import new_element, update_element
-
-
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
-from cluster_colors.pool_colors import pool_colors
 from cluster_colors.cut_colors import cut_colors
+from cluster_colors.pool_colors import pool_colors
+from lxml import etree
+from lxml.etree import _Element as EtreeElement  # type: ignore
+from PIL import Image
+from svg_ultralight import new_element, update_element, write_root
+from svg_ultralight.strings import svg_color_tuple
+
 from posterize.color_dist import desaturate_by_color
+from posterize.image_arrays import (
+    _write_bitmap_from_array,
+    get_image_pixels,
+    write_monochrome_bmp,
+)
+from posterize.paths import PROJECT, WORKING
+from posterize.svg_layers import SvgLayers
 
 
 def get_vivid(color: tuple[float, float, float]) -> float:
@@ -36,7 +37,8 @@ def get_vivid(color: tuple[float, float, float]) -> float:
     :return: the vividness of the color
     """
     r, g, b = color
-    return (max(r, g, b) - min(r, g, b))
+    return max(r, g, b) - min(r, g, b)
+
 
 def get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
     """Pool and cut colors.
@@ -58,7 +60,7 @@ SCREEN_HEAD = (
     r'xmlns:xlink="http://www.w3.org/1999/xlink" '
     r'viewBox="0 0 {0} {1}" width="{0}" height="{1}">'
 )
-SCREEN_TAIL = "</svg>".encode()
+SCREEN_TAIL = b"</svg>"
 
 # def _get_rgb_pixels(path: Path) -> npt.NDArray[np.uint8]:
 #     """Get the RGB pixels of an image.
@@ -68,6 +70,19 @@ SCREEN_TAIL = "</svg>".encode()
 #     """
 #     image = Image.open(path)
 #     return np.array(image)
+
+
+def _normalize_8bit(grid: npt.NDArray[np.float64]) -> npt.NDArray[np.uint8]:
+    """Normalize a grid to 8-bit integers.
+
+    :param grid: grid to normalize
+    :return: normalized grid
+    """
+    breakpoint()
+    # grid[np.where(grid < 0)] = 0
+    grid -= np.min(grid)
+    grid = grid / np.max(grid)
+    return (grid * 255).astype(np.uint8)
 
 
 class TargetImage:
@@ -88,7 +103,7 @@ class TargetImage:
         self._image_grid = np.array(image).astype(float)
         self._state_grid: npt.NDArray[np.float64] | None = None
         self._error_grid: npt.NDArray[np.float64] | None = None
-        self._clusters = get_image_clusters(path)
+        self.clusters = get_image_clusters(path)
 
         self.append_background()
 
@@ -97,40 +112,20 @@ class TargetImage:
 
         :return: the next color to use
         """
-        self._clusters.split_to_at_most(18)
         if not self.elements:
-            return self._clusters.get_rsorted_exemplars()[0]
-
-        prev_element_colors = []
-        for element in self.elements:
-            as_str = element.get("fill")
-            rgb = as_str[4:-1].split(",")
-            prev_element_colors.append(tuple(map(float, rgb)))
-
-        def contrast(color):
-            return min([get_delta_e(color, prev) for prev in prev_element_colors])
-
-        all_colors = self._clusters.get_rsorted_exemplars()
-        all_colors = sorted(all_colors, key=contrast)[::-1]
-
-
-
-#         most_vivid = max(all_colors, key=get_vivid)
-#         print(f"most vivid: {most_vivid}")
-#         all_colors.remove(most_vivid)
-#         all_colors.insert(0, most_vivid)
-#         # big = all_colors[:4]
-#         # sml = all_colors[4:][::1]
-#         # colors = list(it.chain(*zip(big, sml[::-1])))
-        idx = min(idx, len(self._clusters) - 1)
-        # r, g, b = self._clusters.get_rsorted_exemplars()[::-1][idx]
-        r, g, b = all_colors[idx]
+            self.clusters.split_to_at_most(1)
+            r, g, b = self.clusters.get_rsorted_exemplars()[0]
+            return r, g, b
+        self.clusters.split_to_at_most(8)
+        r, g, b = self.clusters.get_rsorted_exemplars()[0]
         return r, g, b
 
     def append_background(self) -> None:
         """Append the background to the list of elements."""
         bg_color = self.get_next_color()
-        self.append(new_element("rect", width="100%", height="100%", fill=f"rgb{bg_color}"))
+        self.append(
+            new_element("rect", width="100%", height="100%", fill=f"rgb{bg_color}")
+        )
 
     @property
     def state_grid(self) -> npt.NDArray[np.float64]:
@@ -164,7 +159,7 @@ class TargetImage:
             state_grid = self.state_grid
         else:
             state_grid = self._raster_state(candidate, WORKING / "candidate.png")
-        return np.sum((state_grid - self._image_grid) ** 2, axis=2)
+        return np.sum((state_grid - self._image_grid) ** 2, axis=2) ** 2
 
     def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
         return float(np.sum(self._get_candidate_error_grid(candidate)))
@@ -180,99 +175,114 @@ class TargetImage:
 
         ws = self._error_grid[..., np.newaxis]
         needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
-        self._clusters = get_clusters(needs)
+        # breakpoint()
+        self.clusters = get_clusters(needs)
 
     def _raster_state(
-            self, candidate: EtreeElement, filename: Path
+        self, candidate: EtreeElement, filename: Path
     ) -> npt.NDArray[np.float64]:
-        elements = self.elements + ([candidate])
+        elements = [*self.elements, candidate]
         bstrings = map(etree.tostring, elements)
         root = etree.fromstring(
             self._bhead + b"\n" + b"\n".join(bstrings) + SCREEN_TAIL
         )
         _ = write_root(_INKSCAPE, filename, root, do_png=True)
         image = Image.open(filename)
-        return np.array(image).astype(float)[:, :, 0:3]
+        return np.array(image).astype(float)[:, :, :3]
 
-    def evaluate_next_color(self, idx: int=0) -> tuple[tuple[float, float, float], npt.NDArray[np.float64]]:
+    def get_color_error_delta(
+        self, color: tuple[float, float, float]
+    ) -> npt.NDArray[np.uint8]:
+        """What is the difference in error between the current state and a solid color?"""
+        solid_color = np.full_like(self._image_grid, color)
+        color_error = np.sum((solid_color - self._image_grid) ** 2, axis=2) ** 2
+        error_delta = color_error - self._error_grid
+        return _normalize_8bit(error_delta)
+
+    def evaluate_next_color(
+        self, idx: int = 0
+    ) -> tuple[tuple[float, float, float], npt.NDArray[np.uint8]]:
         """Evaluate the next color.
 
         :return: the error of the next color
         """
         next_color = self.get_next_color(idx)
-        this_error = self.error_grid # type: ignore
-        solid_color = np.full_like(self._image_grid, next_color)
-        next_error = np.sum((solid_color - self._image_grid) ** 2, axis=2)
-        error_delta = this_error - next_error
-        # error_delta[error_delta < 0] = 0
-        error_delta -= np.min(error_delta)
-        # zeros = np.full_like(error_delta, 0)
-        # error_delta = np.max(zeros, error_delta)
-        # assert np.min(error_delta) == 0
-        error_delta /= np.max(error_delta)
-        error_delta *= 255
-        # gray_pixels = desaturate_by_color(self._image_grid, next_color)
-        # breakpoint()
-        return next_color, error_delta
+        return next_color, self.get_color_error_delta(next_color)
 
 
-LUX_LEVELS = 24
-RECUR = 6
+LUX_LEVELS = 8
 
+LUX_LEVELS = 8
+RECUR = 5
+COL_SPLITS = 8
 
+import numpy as np
 
-LUX_LIMIT = 0.7
+LUX_LIMIT = 1
 
-if __name__  == "__main__":
-    target = TargetImage(PROJECT / "tests/resources/girl.jpg")
+if __name__ == "__main__":
+    target = TargetImage(PROJECT / "tests/resources/tilda.jpg")
 
+    print("selecting background color")
+    target.clusters.split_to_at_most(COL_SPLITS)
+    bg_candidates = [
+        new_element("rect", width="100%", height="100%", fill=f"rgb{c}")
+        for c in target.clusters.get_rsorted_exemplars()
+    ]
+    bg = min(bg_candidates, key=lambda e: target.get_candidate_error(e))
+    target.append(bg)
 
     idx = 0
     for _ in range(40):
-        next_color, next_color_per_pixel = target.evaluate_next_color(idx)
-        print(f"next color: {next_color}")
-        next_color_per_pixel = 255 - next_color_per_pixel.astype(np.uint8) 
-        _write_bitmap_from_array(next_color_per_pixel, "temp.bmp")
+        target.clusters.split_to_at_most(COL_SPLITS)
+        # next_color, next_color_per_pixel = target.evaluate_next_color(idx)
+        # next_color_per_pixel = 255 - next_color_per_pixel.astype(np.uint8)
+        # _write_bitmap_from_array(next_color_per_pixel, "temp.bmp")
 
-        layers = SvgLayers("temp.bmp", despeckle=1/50)
-        def _scored(time: float):
-            candidate = layers(time)
-            _ = update_element(candidate, fill=svg_color_tuple(next_color), opacity="0.65")
-            return (target.get_candidate_error(candidate), time, candidate)
+        luxs = np.linspace(0, LUX_LIMIT, LUX_LEVELS)
+        cols = [(r, g, b) for r, g, b in target.clusters.get_rsorted_exemplars()]
 
-        print("scoring lux levels")
-        scored = {_scored(t) for t in (x/(LUX_LEVELS-1) * LUX_LIMIT for x in range(LUX_LEVELS))}
+        # layers = SvgLayers("temp.bmp", despeckle=1 / 50)
 
-        print("scoring recursive")
-        for _ in range(RECUR):
-            parent_a, parent_b = sorted(scored, key=lambda x: x[0])[:2]
-            new_time = (parent_a[1] + parent_b[1]) / 2
-            scored.add(_scored(new_time))
+        def _scored(
+            layers: SvgLayers, lux: float, col: tuple[float, float, float]
+        ) -> tuple[float, float, EtreeElement]:
+            candidate = layers(lux)
+            _ = update_element(candidate, fill=svg_color_tuple(col), opacity="0.65")
+            error = target.get_candidate_error(candidate)
+            print(error - target.get_candidate_error())
+            return error, lux, candidate
 
+        print("scoring lux matrix")
 
-        layers.close()
+        all_scored: set[tuple[float, float, EtreeElement]] = set()
 
-        best = min(scored, key=lambda x: x[0])
+        for i, col in enumerate(cols):
+            print()
+            print(f"    scoring color {i+1} of {len(cols)}: {col}", end=" ")
+            scored: set[tuple[float, float, EtreeElement]] = set()
+            bmp_name = f"temp_{'-'.join(map(str, col))}.bmp"
+            col_improves = target.get_color_error_delta(col)
+            _write_bitmap_from_array(col_improves, bmp_name)
+            layers = SvgLayers(bmp_name, despeckle=1 / 50)
+            for lux in luxs:
+                print("|", end="")
+                scored.add(_scored(layers, lux, col))
+            for _ in range(RECUR):
+                print("|", end="")
+                parent_a, parent_b = sorted(scored, key=lambda x: x[0])[:2]
+                new_lux = (parent_a[1] + parent_b[1]) / 2
+                scored.add(_scored(layers, new_lux, col))
+            layers.close()
+            all_scored |= scored
 
+        best = min(all_scored, key=lambda x: x[0])
 
-        # with SvgLayers("temp.bmp") as layers:
-        #     candidates = [layers(i/LUX_LEVELS) for i in range(1, LUX_LEVELS+1)]
-        # for candidate in candidates:
-        #     _ = update_element(candidate, fill=svg_color_tuple(next_color))
-        # scored = [(target.get_candidate_error(c), c) for c in candidates]
-        # best = min(scored, key=lambda x: x[0])
         if best[0] < target.get_candidate_error():
             print()
-            print("    >>> ", next_color, best[1])
-            idx = 0
+            print("    >>> ", f"{best[2].attrib['fill']}", best[1])
             target.append(best[2])
         else:
-            idx += 1
-            print(f"raising idx to {idx}")
-        if idx >= 18:
             break
 
-    breakpoint()
-    
-
-
+breakpoint()

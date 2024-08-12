@@ -20,17 +20,18 @@ both.
 :created: 2024-04-19
 """
 
-
 from __future__ import annotations
+
 import dataclasses
 import itertools as it
 from operator import attrgetter
-from typing import Annotated, Iterable, cast
+from typing import Annotated, cast
 
-from numpy import typing as npt
+from collections.abc import Iterable
+
 import numpy as np
-
 from basic_colormath import float_to_8bit_int
+from numpy import typing as npt
 
 Rgb = Annotated[tuple[int, int, int], "3 ints [0, 255]"]
 Rgbwcmyk = Annotated[tuple[int, int, int, int, int, int, int, int], "8 ints [0, 255]"]
@@ -238,7 +239,6 @@ def subtract_overlap_to_improve_contrast(
         rgbs = new_rgbs
 
 
-
 def desaturate_by_color(
     pixels: npt.NDArray[np.float64], color: Rgb
 ) -> npt.NDArray[np.float64]:
@@ -246,4 +246,6 @@ def desaturate_by_color(
     ww, hh = pixels.shape[:2]
     dist = ColorDist.from_rgb(color)
     pixels_dists = np.array([ColorDist.from_rgb(p) for p in pixels.reshape(-1, 3)])
-    return np.array([ColorDist.intersection_volume(dist, p) for p in pixels_dists]).reshape(ww, hh)
+    return np.array(
+        [ColorDist.intersection_volume(dist, p) for p in pixels_dists]
+    ).reshape(ww, hh)
