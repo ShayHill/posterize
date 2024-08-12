@@ -34,6 +34,9 @@ from posterize.image_arrays import (
 from posterize.paths import PROJECT, WORKING
 from posterize.svg_layers import SvgLayers
 
+
+logging.basicConfig(level=logging.INFO)
+
 _MAX_8BIT = 255
 _BIG_INT = 2**32 - 1
 _BIG_SCALE = _BIG_INT / _MAX_8BIT
@@ -144,15 +147,25 @@ class TargetImage:
         image = Image.open(path)
         self._bhead = SCREEN_HEAD.format(image.width, image.height).encode()
 
-        self._image_grid = np.array(image).astype(float)
-
         self.clusters = get_image_clusters(path)
-        bg_r, bg_g, bg_b = self.clusters.as_cluster.exemplar
-        self._bg_color = float_tuple_to_8bit_int_tuple((bg_r, bg_g, bg_b))
-        self.state_grid = self.get_solid_grid(self._bg_color)
-        self.error_grid = self.get_error(self.state_grid)
+        bg_color = self.get_colors(1)[0]
+        self.set_background(bg_color)
 
-        self.append_background()
+        self._image_grid = np.array(image).astype(float)
+        self._state_grid = self.get_solid_grid(bg_color)
+        self._error_grid = self.get_error(self._state_grid)
+
+    def get_colors(self, num: int) -> list[tuple[int, int, int]]:
+        """Get the most common colors in the image.
+
+        :param num: number of colors to get
+        :return: the most common colors in the image, largest to smallest
+        """
+        self.clusters.split_to_at_most(num)
+        colors: list[tuple[int, int, int]] = []
+        for r, g, b in self.clusters.get_rsorted_exemplars():
+            colors.append(float_tuple_to_8bit_int_tuple((r, g, b)))
+        return colors
 
     def get_next_color(self, idx: int = 0) -> tuple[float, float, float]:
         """Get the next color to use.
@@ -167,21 +180,22 @@ class TargetImage:
         r, g, b = self.clusters.get_rsorted_exemplars()[0]
         return r, g, b
 
-    def append_background(self) -> None:
-        """Append the background to the list of elements."""
-        self.append(
-            new_element("rect", width="100%", height="100%", fill=f"rgb{self._bg_color}")
+    def set_background(self, color: tuple[int, int, int]) -> None:
+        """Replace the background with the current background color."""
+        bg_element = new_element(
+            "rect", width="100%", height="100%", fill=f"rgb{color}"
         )
+        self.elements[:1] = [bg_element]
 
-
-    def get_solid_grid(self, color: tuple[float, float, float]) -> npt.NDArray[np.float64]:
+    def get_solid_grid(
+        self, color: tuple[float, float, float]
+    ) -> npt.NDArray[np.float64]:
         """Get a solid color grid the same shape as self._image_grid.
 
         :param color: color to make the grid
         :return: solid color grid
         """
         return np.full_like(self._image_grid, color)
-
 
     def get_error(self, grid: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Get the error-per-pixel between a pixel grid and self._image_grid.
@@ -195,7 +209,7 @@ class TargetImage:
         self, candidate: EtreeElement | None = None
     ) -> npt.NDArray[np.float64]:
         if candidate is None:
-            state_grid = self.state_grid
+            state_grid = self._state_grid
         else:
             state_grid = self._raster_state(candidate, WORKING / "candidate.png")
         return self.get_error(state_grid)
@@ -209,10 +223,10 @@ class TargetImage:
         :param element: element to append
         """
         self.elements.append(element)
-        self.state_grid = self._raster_state(element, WORKING / "state.png")
-        self.error_grid = self._get_candidate_error_grid()
+        self._state_grid = self._raster_state(element, WORKING / "state.png")
+        self._error_grid = self._get_candidate_error_grid()
 
-        ws = self.error_grid[..., np.newaxis]
+        ws = self._error_grid[..., np.newaxis]
         needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
         self.clusters = get_clusters(needs)
 
@@ -234,7 +248,7 @@ class TargetImage:
         """What is the difference in error between the current state and a solid color?"""
         solid_color = np.full_like(self._image_grid, color)
         color_error = self.get_error(solid_color)
-        error_delta = color_error - self.error_grid
+        error_delta = color_error - self._error_grid
         return _normalize_errors_to_8bit(error_delta)
 
     def evaluate_next_color(
@@ -259,17 +273,18 @@ import numpy as np
 LUX_LIMIT = 1
 
 
-if __name__ == "__main__":
-    target = TargetImage(PROJECT / "tests/resources/tilda.jpg")
+def sum_solid_error(target: TargetImage, color: tuple[int, int, int]) -> np.float64:
+    """Get one float representing the error of a solid color."""
+    solid = target.get_solid_grid(color)
+    return np.sum(target.get_error(solid))
 
-    print("selecting background color")
-    target.clusters.split_to_at_most(COL_SPLITS)
-    bg_candidates = [
-        new_element("rect", width="100%", height="100%", fill=f"rgb{c}")
-        for c in target.clusters.get_rsorted_exemplars()
-    ]
-    bg = min(bg_candidates, key=lambda e: target.get_candidate_error(e))
-    target.append(bg)
+
+if __name__ == "__main__":
+    target = TargetImage(PROJECT / "tests/resources/eyes.jpg")
+
+    logging.info("replacing default background color")
+    bg = min(target.get_colors(COL_SPLITS), key=lambda x: sum_solid_error(target, x))
+    target.set_background(bg)
 
     idx = 0
     for _ in range(40):
@@ -325,5 +340,3 @@ if __name__ == "__main__":
             target.append(best[2])
         else:
             break
-
-breakpoint()
