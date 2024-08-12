@@ -33,6 +33,7 @@ _MAX_8BIT = 255
 _BIG_INT = 2**32 - 1
 _BIG_SCALE = _BIG_INT / _MAX_8BIT
 
+
 def get_vivid(color: tuple[float, float, float]) -> float:
     """Get the vividness of a color.
 
@@ -120,7 +121,7 @@ def _normalize_errors_to_8bit(grid: npt.NDArray[np.float64]) -> npt.NDArray[np.u
     shift = 0 - lower
     scale = 255 / (upper - lower)
     grid = np.clip((grid + shift) * scale, 0, 255)
-    return ((grid * _BIG_SCALE ).astype(np.uint32) >> 24).astype(np.uint8)
+    return ((grid * _BIG_SCALE).astype(np.uint32) >> 24).astype(np.uint8)
 
 
 class TargetImage:
@@ -190,6 +191,14 @@ class TargetImage:
             raise RuntimeError(msg)
         return self._error_grid
 
+    def get_error(self, grid: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        """Get the error-per-pixel between a pixel grid and self._image_grid.
+
+        :param grid: array[n,m,3] grid to compare to self._image_grid
+        :return: error-per-pixel [n,m,1] between grid and self._image_grid
+        """
+        return np.sum((self._image_grid - grid) ** 2, axis=2) ** (1 / 2)
+
     def _get_candidate_error_grid(
         self, candidate: EtreeElement | None = None
     ) -> npt.NDArray[np.float64]:
@@ -197,7 +206,7 @@ class TargetImage:
             state_grid = self.state_grid
         else:
             state_grid = self._raster_state(candidate, WORKING / "candidate.png")
-        return np.sum((state_grid - self._image_grid) ** 2, axis=2) ** (1/2)
+        return self.get_error(state_grid)
 
     def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
         return float(np.sum(self._get_candidate_error_grid(candidate)))
@@ -232,8 +241,8 @@ class TargetImage:
     ) -> npt.NDArray[np.uint8]:
         """What is the difference in error between the current state and a solid color?"""
         solid_color = np.full_like(self._image_grid, color)
-        color_error = np.sum((solid_color - self._image_grid) ** 2, axis=2) ** (1/2)
-        error_delta = color_error - self._error_grid
+        color_error = self.get_error(solid_color)
+        error_delta = color_error - self.error_grid
         if max(color) < 75:
             breakpoint()
         return _normalize_errors_to_8bit(error_delta)
@@ -258,6 +267,7 @@ COL_SPLITS = 8
 import numpy as np
 
 LUX_LIMIT = 1
+
 
 if __name__ == "__main__":
     target = TargetImage(PROJECT / "tests/resources/tilda.jpg")
