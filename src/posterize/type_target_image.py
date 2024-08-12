@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from basic_colormath import get_delta_e
+from basic_colormath import get_delta_e, float_to_8bit_int
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
 from cluster_colors.cut_colors import cut_colors
@@ -29,6 +29,9 @@ from posterize.image_arrays import (
 from posterize.paths import PROJECT, WORKING
 from posterize.svg_layers import SvgLayers
 
+_MAX_8BIT = 255
+_BIG_INT = 2**32 - 1
+_BIG_SCALE = _BIG_INT / _MAX_8BIT
 
 def get_vivid(color: tuple[float, float, float]) -> float:
     """Get the vividness of a color.
@@ -72,17 +75,52 @@ SCREEN_TAIL = b"</svg>"
 #     return np.array(image)
 
 
-def _normalize_8bit(grid: npt.NDArray[np.float64]) -> npt.NDArray[np.uint8]:
-    """Normalize a grid to 8-bit integers.
+def _get_iqr_bounds(floats: npt.NDArray[np.float64]) -> tuple[np.float64, np.float64]:
+    """Get the IQR bounds of a set of floats.
 
-    :param grid: grid to normalize
-    :return: normalized grid
+    :param floats: floats to get the IQR bounds of
+    :return: the IQR bounds of the floats (lower, upper)
+
+    Use the interquartile range to determine the bounds of a set of floats (ignoring
+    outliers).
     """
-    breakpoint()
-    # grid[np.where(grid < 0)] = 0
-    grid -= np.min(grid)
-    grid = grid / np.max(grid)
-    return (grid * 255).astype(np.uint8)
+    q25 = np.quantile(floats, 0.25)
+    q75 = np.quantile(floats, 0.75)
+    iqr = q75 - q25
+    lower: np.float64 = max(q25 - 1.5 * iqr, np.min(floats))
+    upper: np.float64 = min(q75 + 1.5 * iqr, np.max(floats))
+    return lower, upper
+
+
+def _normalize_errors_to_8bit(grid: npt.NDArray[np.float64]) -> npt.NDArray[np.uint8]:
+    """Normalize a grid of floats (error delta per pixel) to 8-bit integers.
+
+    :param grid: grid to normalize - array[float64] shape=(h, w)
+    :return: normalized grid - array[uint8] shape=(h, w)
+
+    Here, this takes a grid of floats representing the difference in error-per-pixel
+    between two images. Where
+
+    * errors_a = the error-per-pixel between the target image and the current state
+    * errors_b = the error-per-pixel between the target image some potential state
+
+    The `grid` arg here is errors_b - errors_a, so the lowest (presumably negative)
+    values are where the potential state is better than the current state, and the
+    highest values (presumably postive) are where the potential state is worse.
+
+    The return value is a grid of the same shape with the values normalized to 8-bit
+    integers, clipping outliers. This output grid will be used to create a monochrome
+    bitmap where the color of each pixel represents the improvement we would see if
+    using the potential state instead of the current state on that pixel.
+
+    * 0: potential state is better
+    * 255: potential state is worse
+    """
+    lower, upper = _get_iqr_bounds(grid.flatten())
+    shift = 0 - lower
+    scale = 255 / (upper - lower)
+    grid = np.clip((grid + shift) * scale, 0, 255)
+    return ((grid * _BIG_SCALE ).astype(np.uint32) >> 24).astype(np.uint8)
 
 
 class TargetImage:
@@ -159,7 +197,7 @@ class TargetImage:
             state_grid = self.state_grid
         else:
             state_grid = self._raster_state(candidate, WORKING / "candidate.png")
-        return np.sum((state_grid - self._image_grid) ** 2, axis=2) ** 2
+        return np.sum((state_grid - self._image_grid) ** 2, axis=2) ** (1/2)
 
     def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
         return float(np.sum(self._get_candidate_error_grid(candidate)))
@@ -175,7 +213,6 @@ class TargetImage:
 
         ws = self._error_grid[..., np.newaxis]
         needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
-        # breakpoint()
         self.clusters = get_clusters(needs)
 
     def _raster_state(
@@ -195,9 +232,11 @@ class TargetImage:
     ) -> npt.NDArray[np.uint8]:
         """What is the difference in error between the current state and a solid color?"""
         solid_color = np.full_like(self._image_grid, color)
-        color_error = np.sum((solid_color - self._image_grid) ** 2, axis=2) ** 2
+        color_error = np.sum((solid_color - self._image_grid) ** 2, axis=2) ** (1/2)
         error_delta = color_error - self._error_grid
-        return _normalize_8bit(error_delta)
+        if max(color) < 75:
+            breakpoint()
+        return _normalize_errors_to_8bit(error_delta)
 
     def evaluate_next_color(
         self, idx: int = 0
@@ -262,8 +301,10 @@ if __name__ == "__main__":
             print(f"    scoring color {i+1} of {len(cols)}: {col}", end=" ")
             scored: set[tuple[float, float, EtreeElement]] = set()
             bmp_name = f"temp_{'-'.join(map(str, col))}.bmp"
+
             col_improves = target.get_color_error_delta(col)
             _write_bitmap_from_array(col_improves, bmp_name)
+
             layers = SvgLayers(bmp_name, despeckle=1 / 50)
             for lux in luxs:
                 print("|", end="")
