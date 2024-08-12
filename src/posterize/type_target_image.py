@@ -5,11 +5,16 @@
 """
 
 import itertools as it
+import logging
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from basic_colormath import get_delta_e, float_to_8bit_int
+from basic_colormath import (
+    float_to_8bit_int,
+    float_tuple_to_8bit_int_tuple,
+    get_delta_e,
+)
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
 from cluster_colors.cut_colors import cut_colors
@@ -140,9 +145,12 @@ class TargetImage:
         self._bhead = SCREEN_HEAD.format(image.width, image.height).encode()
 
         self._image_grid = np.array(image).astype(float)
-        self._state_grid: npt.NDArray[np.float64] | None = None
-        self._error_grid: npt.NDArray[np.float64] | None = None
+
         self.clusters = get_image_clusters(path)
+        bg_r, bg_g, bg_b = self.clusters.as_cluster.exemplar
+        self._bg_color = float_tuple_to_8bit_int_tuple((bg_r, bg_g, bg_b))
+        self.state_grid = self.get_solid_grid(self._bg_color)
+        self.error_grid = self.get_error(self.state_grid)
 
         self.append_background()
 
@@ -161,35 +169,19 @@ class TargetImage:
 
     def append_background(self) -> None:
         """Append the background to the list of elements."""
-        bg_color = self.get_next_color()
         self.append(
-            new_element("rect", width="100%", height="100%", fill=f"rgb{bg_color}")
+            new_element("rect", width="100%", height="100%", fill=f"rgb{self._bg_color}")
         )
 
-    @property
-    def state_grid(self) -> npt.NDArray[np.float64]:
-        """Get the current image.
 
-        :return: the current image
+    def get_solid_grid(self, color: tuple[float, float, float]) -> npt.NDArray[np.float64]:
+        """Get a solid color grid the same shape as self._image_grid.
+
+        :param color: color to make the grid
+        :return: solid color grid
         """
-        if self._state_grid is None:
-            msg = f"state image not set for {self.path}"
-            raise ValueError(msg)
-        return self._state_grid
+        return np.full_like(self._image_grid, color)
 
-    @property
-    def error_grid(self) -> npt.NDArray[np.float64]:
-        """Get the current image.
-
-        :return: the current image
-        """
-        if self._state_grid is None:
-            msg = f"state image not set for {self.path}"
-            raise ValueError(msg)
-        if self._error_grid is None:
-            msg = f"error grid not set with state_grid"
-            raise RuntimeError(msg)
-        return self._error_grid
 
     def get_error(self, grid: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Get the error-per-pixel between a pixel grid and self._image_grid.
@@ -217,10 +209,10 @@ class TargetImage:
         :param element: element to append
         """
         self.elements.append(element)
-        self._state_grid = self._raster_state(element, WORKING / "state.png")
-        self._error_grid = self._get_candidate_error_grid()
+        self.state_grid = self._raster_state(element, WORKING / "state.png")
+        self.error_grid = self._get_candidate_error_grid()
 
-        ws = self._error_grid[..., np.newaxis]
+        ws = self.error_grid[..., np.newaxis]
         needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
         self.clusters = get_clusters(needs)
 
@@ -243,8 +235,6 @@ class TargetImage:
         solid_color = np.full_like(self._image_grid, color)
         color_error = self.get_error(solid_color)
         error_delta = color_error - self.error_grid
-        if max(color) < 75:
-            breakpoint()
         return _normalize_errors_to_8bit(error_delta)
 
     def evaluate_next_color(
