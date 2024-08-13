@@ -13,8 +13,9 @@ POTRACE = BINARIES / "potrace.exe"
 
 # hold intermediate images used for calculations
 WORKING = BINARIES / "working"
+TEMP = WORKING / "temp.bmp"
 
-for directory in (BINARIES, WORKING):
+for directory in (BINARIES, WORKING, TEMP):
     directory.mkdir(parents=True, exist_ok=True)
 
 

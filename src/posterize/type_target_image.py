@@ -4,10 +4,13 @@
 :created: 2024-05-09
 """
 
+from __future__ import annotations
 import itertools as it
 import logging
 from pathlib import Path
+import dataclasses
 
+from typing import Iterator
 import numpy as np
 import numpy.typing as npt
 from basic_colormath import (
@@ -31,9 +34,8 @@ from posterize.image_arrays import (
     get_image_pixels,
     write_monochrome_bmp,
 )
-from posterize.paths import PROJECT, WORKING
+from posterize.paths import PROJECT, TEMP, WORKING
 from posterize.svg_layers import SvgLayers
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -155,6 +157,10 @@ class TargetImage:
         self._state_grid = self.get_solid_grid(bg_color)
         self._error_grid = self.get_error(self._state_grid)
 
+    @property
+    def sum_error(self) -> float:
+        return float(np.sum(self._error_grid))
+
     def get_colors(self, num: int) -> list[tuple[int, int, int]]:
         """Get the most common colors in the image.
 
@@ -164,6 +170,9 @@ class TargetImage:
         self.clusters.split_to_at_most(num)
         colors: list[tuple[int, int, int]] = []
         for r, g, b in self.clusters.get_rsorted_exemplars():
+            r = min(255, max(0, r))
+            g = min(255, max(0, g))
+            b = min(255, max(0, b))
             colors.append(float_tuple_to_8bit_int_tuple((r, g, b)))
         return colors
 
@@ -217,6 +226,15 @@ class TargetImage:
     def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
         return float(np.sum(self._get_candidate_error_grid(candidate)))
 
+    def get_last_used_color(self) -> tuple[int, int, int]:
+        """Get the last color used.
+
+        :return: the color of the last element added
+        """
+        rgb_str = self.elements[-1].attrib["fill"][4:-1]  # '255,255,255'
+        r, g, b = (int(x) for x in rgb_str.split(","))
+        return (r, g, b)
+
     def append(self, element: EtreeElement) -> None:
         """Append an element to the list of elements.
 
@@ -264,7 +282,6 @@ class TargetImage:
 
 LUX_LEVELS = 8
 
-LUX_LEVELS = 8
 RECUR = 5
 COL_SPLITS = 8
 
@@ -279,64 +296,132 @@ def sum_solid_error(target: TargetImage, color: tuple[int, int, int]) -> np.floa
     return np.sum(target.get_error(solid))
 
 
-if __name__ == "__main__":
-    target = TargetImage(PROJECT / "tests/resources/eyes.jpg")
+def _replace_background(target: TargetImage, num: int, idx: int = 0) -> None:
+    """Replace the default background color with one of the cluster color exemplars.
 
+    :param target: target image to replace the background of
+    :param num: number of colors to use
+    :param idx: index of the color to use. Will use the largest cluster exemplar by
+        default.
+    """
     logging.info("replacing default background color")
-    bg = min(target.get_colors(COL_SPLITS), key=lambda x: sum_solid_error(target, x))
-    target.set_background(bg)
+    cols = target.get_colors(num)
+    target.set_background(cols[idx])
+
+
+def _get_svglayers_instance_from_color(
+    target: TargetImage, col: tuple[int, int, int]
+) -> SvgLayers:
+    """Create an svg layers instance from a TargetImage and a color.
+
+    :param target: target image to use
+    :param col: color to use
+    :return: svg layers instance
+
+    Write an image representing the gradient (white is better) of how much the given
+    color would improve the current state. Use this image to create an SvgLayers
+    instance.
+    """
+    bmp_name = TEMP / f"temp_{'-'.join(map(str, col))}.bmp"
+    col_improves = target.get_color_error_delta(col)
+    _write_bitmap_from_array(col_improves, bmp_name)
+    return SvgLayers(bmp_name, despeckle=1 / 50)
+
+
+def _get_candidate(
+    layers: SvgLayers, col: tuple[int, int, int], lux: float
+) -> EtreeElement:
+    """Create a candidate element.
+
+    :param layers: svg layers instance to use
+    :param col: color to use
+    :param lux: lux level to use
+    :return: candidate element
+    """
+    return update_element(
+        layers(lux),
+        fill=svg_color_tuple(col),
+        opacity="0.65",
+    )
+
+
+class ScoredCandidate:
+
+    def __init__(self, color: tuple[int, int, int], layers: SvgLayers, lux: float):
+        self.color = color
+        self.layers = layers
+        self.lux = lux
+        self._candidate: EtreeElement | None = None
+        self._error: float | None = None
+
+    @property
+    def candidate(self) -> EtreeElement:
+        if self._candidate is None:
+            self._candidate = _get_candidate(self.layers, self.color, self.lux)
+        return self._candidate
+
+    @property
+    def error(self) -> float:
+        if self._error is None:
+            self._error = target.get_candidate_error(self.candidate)
+        return self._error
+
+    def __lt__(self, other: ScoredCandidate) -> bool:
+        return (self.error, self.lux) < (other.error, other.lux)
+
+
+def _iter_scored_candidates_fixed_color(
+    target: TargetImage, col: tuple[int, int, int], num_luxs: int
+) -> Iterator[ScoredCandidate]:
+    layers = _get_svglayers_instance_from_color(target, col)
+    for lux in np.linspace(0, 1, num_luxs):
+        scored_candidate = ScoredCandidate(col, layers, lux)
+        logging.info(f"  ({lux:0.2f}, {scored_candidate.error})")
+        yield scored_candidate
+
+
+def _iter_scored_candidates(
+    target: TargetImage, num_cols: int, num_luxs: int
+) -> Iterator[ScoredCandidate]:
+    last_color = target.get_last_used_color()
+    cols = target.get_colors(num_cols)
+    cols = [x for x in cols if get_delta_e(x, last_color) > 10]
+    for col in cols:
+        logging.info(col)
+        yield from _iter_scored_candidates_fixed_color(target, col, num_luxs)
+
+
+if __name__ == "__main__":
+    target = TargetImage(PROJECT / "tests/resources/bird.jpg")
+    _replace_background(target, COL_SPLITS)
 
     idx = 0
     for _ in range(40):
-        target.clusters.split_to_at_most(COL_SPLITS)
-        # next_color, next_color_per_pixel = target.evaluate_next_color(idx)
-        # next_color_per_pixel = 255 - next_color_per_pixel.astype(np.uint8)
-        # _write_bitmap_from_array(next_color_per_pixel, "temp.bmp")
-
-        luxs = np.linspace(0, LUX_LIMIT, LUX_LEVELS)
-        cols = [(r, g, b) for r, g, b in target.clusters.get_rsorted_exemplars()]
-
-        # layers = SvgLayers("temp.bmp", despeckle=1 / 50)
-
-        def _scored(
-            layers: SvgLayers, lux: float, col: tuple[float, float, float]
-        ) -> tuple[float, float, EtreeElement]:
-            candidate = layers(lux)
-            _ = update_element(candidate, fill=svg_color_tuple(col), opacity="0.65")
-            error = target.get_candidate_error(candidate)
-            print(error - target.get_candidate_error())
-            return error, lux, candidate
-
-        print("scoring lux matrix")
-
-        all_scored: set[tuple[float, float, EtreeElement]] = set()
-
-        for i, col in enumerate(cols):
-            print()
-            print(f"    scoring color {i+1} of {len(cols)}: {col}", end=" ")
-            scored: set[tuple[float, float, EtreeElement]] = set()
-            bmp_name = f"temp_{'-'.join(map(str, col))}.bmp"
-
-            col_improves = target.get_color_error_delta(col)
-            _write_bitmap_from_array(col_improves, bmp_name)
-
-            layers = SvgLayers(bmp_name, despeckle=1 / 50)
-            for lux in luxs:
-                print("|", end="")
-                scored.add(_scored(layers, lux, col))
-            for _ in range(RECUR):
-                print("|", end="")
-                parent_a, parent_b = sorted(scored, key=lambda x: x[0])[:2]
-                new_lux = (parent_a[1] + parent_b[1]) / 2
-                scored.add(_scored(layers, new_lux, col))
-            layers.close()
-            all_scored |= scored
-
-        best = min(all_scored, key=lambda x: x[0])
-
-        if best[0] < target.get_candidate_error():
-            print()
-            print("    >>> ", f"{best[2].attrib['fill']}", best[1])
-            target.append(best[2])
-        else:
+        scored_candidates = tuple(
+            _iter_scored_candidates(target, COL_SPLITS, LUX_LEVELS)
+        )
+        if not scored_candidates:
             break
+        best = min(scored_candidates)
+        logging.info(f"best: {best.error} {best.color} {best.lux:0.2f}")
+
+        best_color = [x for x in scored_candidates if x.color == best.color]
+        logging.info(f"best_color: {len(best_color)}")
+        if len(best_color) == 1:
+            if best.error > target.sum_error:
+                break
+            target.append(best.candidate)
+            continue
+
+        best, good = sorted(best_color)[:2]
+        for _ in range(RECUR):
+            logging.info(f"recur: best.score")
+            test = ScoredCandidate(best.color, best.layers, (best.lux + good.lux) / 2)
+            if test > best:
+                break
+            best, good = sorted([best, test, good])[:2]
+        if best.error > target.sum_error:
+            break
+        target.append(best.candidate)
+            
+
