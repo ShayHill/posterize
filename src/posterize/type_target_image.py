@@ -5,10 +5,13 @@
 """
 
 from __future__ import annotations
+import os
 import itertools as it
+import io
 import logging
 from pathlib import Path
 import dataclasses
+from svg_ultralight.inkscape import rasterize_svg
 
 from typing import Iterator
 import numpy as np
@@ -93,10 +96,23 @@ def _get_iqr_bounds(floats: npt.NDArray[np.float64]) -> tuple[np.float64, np.flo
     :return: the IQR bounds of the floats (lower, upper)
 
     Use the interquartile range to determine the bounds of a set of floats (ignoring
-    outliers).
+    outliers). If an image has a lot of background (> 50% pixels are the same color),
+    it will be necessary to stretch the interquartile range to have a range at all.
     """
-    q25 = np.quantile(floats, 0.25)
-    q75 = np.quantile(floats, 0.75)
+    bot_percent = 25
+    top_percent = 75
+    q25 = q75 = 0
+    while bot_percent >= 0:
+        q25 = np.quantile(floats, bot_percent / 100)
+        q75 = np.quantile(floats, top_percent / 100)
+        if q25 < q75:
+            break
+        bot_percent -= 5
+        top_percent += 5
+    else:
+        # image is solid color
+        return np.float64(q25 - 1), np.float64(q25)
+
     iqr = q75 - q25
     lower: np.float64 = max(q25 - 1.5 * iqr, np.min(floats))
     upper: np.float64 = min(q75 + 1.5 * iqr, np.max(floats))
@@ -151,9 +167,9 @@ class TargetImage:
 
         self.clusters = get_image_clusters(path)
         bg_color = self.get_colors(1)[0]
-        self.set_background(bg_color)
 
         self._image_grid = np.array(image).astype(float)
+        self.set_background(bg_color)
         self._state_grid = self.get_solid_grid(bg_color)
         self._error_grid = self.get_error(self._state_grid)
 
@@ -165,16 +181,19 @@ class TargetImage:
         """Get the most common colors in the image.
 
         :param num: number of colors to get
-        :return: the most common colors in the image, largest to smallest
+        :return: the num+1 most common colors in the image, largest to smallest
         """
         self.clusters.split_to_at_most(num)
-        colors: list[tuple[int, int, int]] = []
-        for r, g, b in self.clusters.get_rsorted_exemplars():
-            r = min(255, max(0, r))
-            g = min(255, max(0, g))
-            b = min(255, max(0, b))
-            colors.append(float_tuple_to_8bit_int_tuple((r, g, b)))
-        return colors
+        num_cols = self.clusters.get_rsorted_exemplars()
+        main_col = self.clusters.as_cluster.exemplar
+        colors = [main_col, *num_cols]
+        return [float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors]
+
+    def get_next_colors(self, num: int) -> list[tuple[int, int, int]]:
+        """Get the most common colors in the image farthest from last_color."""
+        last_color = self.get_last_used_color()
+        colors = set(self.get_colors(num)) | set(self.get_colors(1))
+        return sorted(colors, key=lambda x: get_delta_e(x, last_color))[-num // 2 :]
 
     def get_next_color(self, idx: int = 0) -> tuple[float, float, float]:
         """Get the next color to use.
@@ -195,6 +214,7 @@ class TargetImage:
             "rect", width="100%", height="100%", fill=f"rgb{color}"
         )
         self.elements[:1] = [bg_element]
+        self._state_grid = self._raster_state(None, WORKING / "state.svg")
 
     def get_solid_grid(
         self, color: tuple[float, float, float]
@@ -212,7 +232,9 @@ class TargetImage:
         :param grid: array[n,m,3] grid to compare to self._image_grid
         :return: error-per-pixel [n,m,1] between grid and self._image_grid
         """
-        return np.sum((self._image_grid - grid) ** 2, axis=2) ** (1 / 2)
+        image_as_floats = self._image_grid.astype(float)
+        grid_as_floats = grid.astype(float)
+        return np.sum((image_as_floats - grid_as_floats) ** 2, axis=2) ** (1 / 2)
 
     def _get_candidate_error_grid(
         self, candidate: EtreeElement | None = None
@@ -220,7 +242,7 @@ class TargetImage:
         if candidate is None:
             state_grid = self._state_grid
         else:
-            state_grid = self._raster_state(candidate, WORKING / "candidate.png")
+            state_grid = self._raster_state(candidate, WORKING / "candidate.svg")
         return self.get_error(state_grid)
 
     def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
@@ -241,7 +263,7 @@ class TargetImage:
         :param element: element to append
         """
         self.elements.append(element)
-        self._state_grid = self._raster_state(element, WORKING / "state.png")
+        self._state_grid = self._raster_state(None, WORKING / "state.svg")
         self._error_grid = self._get_candidate_error_grid()
 
         ws = self._error_grid[..., np.newaxis]
@@ -249,16 +271,22 @@ class TargetImage:
         self.clusters = get_clusters(needs)
 
     def _raster_state(
-        self, candidate: EtreeElement, filename: Path
-    ) -> npt.NDArray[np.float64]:
-        elements = [*self.elements, candidate]
+        self, candidate: EtreeElement | None, filename: Path
+    ) -> npt.NDArray[np.uint8]:
+        elements = [*self.elements]
+        if candidate is not None:
+            elements.append(candidate)
         bstrings = map(etree.tostring, elements)
         root = etree.fromstring(
             self._bhead + b"\n" + b"\n".join(bstrings) + SCREEN_TAIL
         )
-        _ = write_root(_INKSCAPE, filename, root, do_png=True)
-        image = Image.open(filename)
-        return np.array(image).astype(float)[:, :, :3]
+        _ = write_root(_INKSCAPE, filename, root)
+        png_bytes = rasterize_svg(_INKSCAPE, filename)
+        png_image = Image.open(io.BytesIO(png_bytes))
+        # TODO: make this into something besides a guess based on filename
+        if "state" in filename.stem:
+            png_image.save(WORKING / f"state{len(self.elements):02n}.png")
+        return np.array(png_image).astype(np.uint8)[:, :, :3]
 
     def get_color_error_delta(
         self, color: tuple[float, float, float]
@@ -282,7 +310,7 @@ class TargetImage:
 
 LUX_LEVELS = 8
 
-RECUR = 5
+RECUR = 8
 COL_SPLITS = 8
 
 import numpy as np
@@ -290,7 +318,9 @@ import numpy as np
 LUX_LIMIT = 1
 
 
-def sum_solid_error(target: TargetImage, color: tuple[int, int, int]) -> np.float64:
+def _get_sum_solid_error(
+    target: TargetImage, color: tuple[int, int, int]
+) -> np.float64:
     """Get one float representing the error of a solid color."""
     solid = target.get_solid_grid(color)
     return np.sum(target.get_error(solid))
@@ -306,7 +336,8 @@ def _replace_background(target: TargetImage, num: int, idx: int = 0) -> None:
     """
     logging.info("replacing default background color")
     cols = target.get_colors(num)
-    target.set_background(cols[idx])
+    scored = [(_get_sum_solid_error(target, col), col) for col in cols]
+    target.set_background(min(scored)[1])
 
 
 def _get_svglayers_instance_from_color(
@@ -329,82 +360,150 @@ def _get_svglayers_instance_from_color(
 
 
 def _get_candidate(
-    layers: SvgLayers, col: tuple[int, int, int], lux: float
+    layers: SvgLayers, col: tuple[int, int, int], lux: float, opacity: float
 ) -> EtreeElement:
     """Create a candidate element.
 
     :param layers: svg layers instance to use
     :param col: color to use
     :param lux: lux level to use
+    :param opacity: opacity level to use
     :return: candidate element
     """
     return update_element(
         layers(lux),
         fill=svg_color_tuple(col),
-        opacity="0.65",
+        opacity=f"{opacity:0.2f}",
     )
 
 
 class ScoredCandidate:
+    """A candidate svg path with the arguments necessary to produce it."""
 
-    def __init__(self, color: tuple[int, int, int], layers: SvgLayers, lux: float):
+    def __init__(
+        self,
+        target: TargetImage,
+        color: tuple[int, int, int],
+        layers: SvgLayers,
+        lux: float,
+        opacity: float,
+    ):
+        """Initialize a ScoredCandidate.
+
+        :param target: target image for calculating error
+        :param color: color to use
+        :param layers: SvgLayers instance to use (created externally from color)
+        :param lux: lux level to use
+        :param opacity: opacity level to use for candidate
+        """
+        self.target = target
         self.color = color
         self.layers = layers
         self.lux = lux
+        self.opacity = opacity
         self._candidate: EtreeElement | None = None
         self._error: float | None = None
 
     @property
     def candidate(self) -> EtreeElement:
+        """Create the candidate element."""
         if self._candidate is None:
-            self._candidate = _get_candidate(self.layers, self.color, self.lux)
+            self._candidate = _get_candidate(
+                self.layers, self.color, self.lux, self.opacity
+            )
         return self._candidate
 
     @property
     def error(self) -> float:
+        """Calculate the error of the candidate."""
         if self._error is None:
-            self._error = target.get_candidate_error(self.candidate)
+            self._error = self.target.get_candidate_error(self.candidate)
         return self._error
 
     def __lt__(self, other: ScoredCandidate) -> bool:
-        return (self.error, self.lux) < (other.error, other.lux)
+        """Compare two ScoredCandidates by error and lux.
+
+        The best candidate is the candidate with the lowest error. A tie is unlikely,
+        but if it happens, choose the larger lux level (which presumably will add the
+        most geometry).
+        """
+        return (self.error, -self.lux) < (other.error, -other.lux)
 
 
 def _iter_scored_candidates_fixed_color(
-    target: TargetImage, col: tuple[int, int, int], num_luxs: int
+    target: TargetImage, col: tuple[int, int, int], num_luxs: int, opacity: float
 ) -> Iterator[ScoredCandidate]:
+    """Iterate over scored candidates for a fixed color.
+
+    :param target: target image against which to score the candidates
+    :param col: color to use
+    :param num_luxs: number of lux levels to use
+    :param opacity: opacity level to use for candidate
+
+    To  create candidates, an SvgLayers instance is created from each color. This is
+    an expensive operation, so do it once and then query it for each lux level.
+    """
     layers = _get_svglayers_instance_from_color(target, col)
     for lux in np.linspace(0, 1, num_luxs):
-        scored_candidate = ScoredCandidate(col, layers, lux)
-        logging.info(f"  ({lux:0.2f}, {scored_candidate.error})")
+        scored_candidate = ScoredCandidate(target, col, layers, lux, opacity)
+        # logging.info(f"  ({lux:0.2f}, {scored_candidate.error})")
         yield scored_candidate
 
 
 def _iter_scored_candidates(
-    target: TargetImage, num_cols: int, num_luxs: int
+    target: TargetImage, num_cols: int, num_luxs: int, opacity: float
 ) -> Iterator[ScoredCandidate]:
-    last_color = target.get_last_used_color()
-    cols = target.get_colors(num_cols)
-    cols = [x for x in cols if get_delta_e(x, last_color) > 10]
+    """Iterate over scored candidates.
+
+    :param target: target image against which to score the candidates
+    :param num_cols: number of colors to use
+    :param num_luxs: number of lux levels to use
+    :param opacity: opacity level to use for candidate
+
+    Yield a ScoredCandidate instance for each intersection of colors and lux levels.
+    """
+    cols = target.get_next_colors(num_cols)
     for col in cols:
         logging.info(col)
-        yield from _iter_scored_candidates_fixed_color(target, col, num_luxs)
+        yield from _iter_scored_candidates_fixed_color(target, col, num_luxs, opacity)
 
 
-if __name__ == "__main__":
-    target = TargetImage(PROJECT / "tests/resources/bird.jpg")
+def get_posterize_elements(
+    image_path: str | os.PathLike[str],
+    num_cols: int,
+    num_luxs: int,
+    opacity: float,
+    max_layers: int,
+) -> list[EtreeElement]:
+    """Return a list of elements to create a posterized image.
+
+    :param image_path: path to the image
+    :param num_cols: number of colors to split the image into before selecting a
+        color for the next element (will add full image exemplar to use num_cols + 1
+        colors.
+    :param num_luxs: number of lux levels to use
+    :param opacity: opacity level to use for candidate
+    :param max_layers: maximum number of layers to add to the image
+
+    The first element will be a rect element showing the background color. Each
+    additional element will be a path element filled with a color that will
+    progressively improve the approximation.
+    """
+    target = TargetImage(Path(image_path))
+    logging.info(f"old_bg_color: {target.get_last_used_color()}")
     _replace_background(target, COL_SPLITS)
+    logging.info(f"new_bg_color: {target.get_last_used_color()}")
 
-    idx = 0
-    for _ in range(40):
-        scored_candidates = tuple(
-            _iter_scored_candidates(target, COL_SPLITS, LUX_LEVELS)
+    for _ in range(max_layers):
+        logging.info(f"layer {len(target.elements)}")
+        scored_candidates = list(
+            _iter_scored_candidates(target, num_cols, num_luxs, opacity)
         )
         if not scored_candidates:
+            # shouldn't happen, but cover pathological argument values
             break
         best = min(scored_candidates)
         logging.info(f"best: {best.error} {best.color} {best.lux:0.2f}")
-
         best_color = [x for x in scored_candidates if x.color == best.color]
         logging.info(f"best_color: {len(best_color)}")
         if len(best_color) == 1:
@@ -415,13 +514,21 @@ if __name__ == "__main__":
 
         best, good = sorted(best_color)[:2]
         for _ in range(RECUR):
-            logging.info(f"recur: best.score")
-            test = ScoredCandidate(best.color, best.layers, (best.lux + good.lux) / 2)
-            if test > best:
+            logging.info(f"recur: {best.lux} {best.error}")
+            test = ScoredCandidate(
+                target, best.color, best.layers, (best.lux + good.lux) / 2, opacity
+            )
+            if test > good:
+                logging.info("breaking due to high test score")
                 break
             best, good = sorted([best, test, good])[:2]
         if best.error > target.sum_error:
             break
         target.append(best.candidate)
-            
+    return target.elements
 
+
+if __name__ == "__main__":
+    _ = get_posterize_elements(
+        PROJECT / "tests/resources/taleb.jpg", 3, LUX_LEVELS, 0.85, 8
+    )
