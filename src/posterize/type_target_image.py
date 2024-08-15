@@ -5,13 +5,18 @@
 """
 
 from __future__ import annotations
+import numpy as np
 import os
+import pickle
 import itertools as it
 import io
 import logging
 from pathlib import Path
 import dataclasses
 from svg_ultralight.inkscape import rasterize_svg
+import inspect
+import copy
+
 
 from typing import Iterator
 import numpy as np
@@ -37,7 +42,7 @@ from posterize.image_arrays import (
     get_image_pixels,
     write_monochrome_bmp,
 )
-from posterize.paths import PROJECT, TEMP, WORKING
+from posterize.paths import PROJECT, TEMP, WORKING, CACHE
 from posterize.svg_layers import SvgLayers
 
 logging.basicConfig(level=logging.INFO)
@@ -153,14 +158,29 @@ def _normalize_errors_to_8bit(grid: npt.NDArray[np.float64]) -> npt.NDArray[np.u
 class TargetImage:
     """A type to store input images and current error."""
 
-    def __init__(self, path: Path, elements: list[EtreeElement] | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        cache_filename: Path | None = None,
+    ) -> None:
         """Initialize a TargetImage.
 
         :param path: path to the image
         :param lux: number of quantiles to use in error calculation
         """
+        image = Image.open(path)
+
+        if cache_filename is not None and cache_filename.exists():
+            with cache_filename.open("rb") as f:
+                self.root = etree.fromstring(f.read())
+                print(f"loaded {cache_filename} with {len(self.root)} elements")
+        else:
+            bhead = SCREEN_HEAD.format(image.width, image.height).encode()
+            self.root = etree.fromstring(bhead + b"\n" + SCREEN_TAIL)
+
+
         self.path = path
-        self.elements: list[EtreeElement] = elements or []
+        self.cache_filename = cache_filename
 
         image = Image.open(path)
         self._bhead = SCREEN_HEAD.format(image.width, image.height).encode()
@@ -195,25 +215,16 @@ class TargetImage:
         colors = set(self.get_colors(num)) | set(self.get_colors(1))
         return sorted(colors, key=lambda x: get_delta_e(x, last_color))[-num // 2 :]
 
-    def get_next_color(self, idx: int = 0) -> tuple[float, float, float]:
-        """Get the next color to use.
-
-        :return: the next color to use
-        """
-        if not self.elements:
-            self.clusters.split_to_at_most(1)
-            r, g, b = self.clusters.get_rsorted_exemplars()[0]
-            return r, g, b
-        self.clusters.split_to_at_most(8)
-        r, g, b = self.clusters.get_rsorted_exemplars()[0]
-        return r, g, b
 
     def set_background(self, color: tuple[int, int, int]) -> None:
         """Replace the background with the current background color."""
         bg_element = new_element(
             "rect", width="100%", height="100%", fill=f"rgb{color}"
         )
-        self.elements[:1] = [bg_element]
+        try:
+            self.root[0] = bg_element
+        except IndexError:
+            self.root.append(bg_element)
         self._state_grid = self._raster_state(None, WORKING / "state.svg")
 
     def get_solid_grid(
@@ -253,7 +264,7 @@ class TargetImage:
 
         :return: the color of the last element added
         """
-        rgb_str = self.elements[-1].attrib["fill"][4:-1]  # '255,255,255'
+        rgb_str = self.root[-1].attrib["fill"][4:-1]  # '255,255,255'
         r, g, b = (int(x) for x in rgb_str.split(","))
         return (r, g, b)
 
@@ -261,8 +272,11 @@ class TargetImage:
         """Append an element to the list of elements.
 
         :param element: element to append
+
+        Update the state and error grids, update the color clusters with original
+        pixel colors weighted by error, and cache the instance.
         """
-        self.elements.append(element)
+        self.root.append(element)
         self._state_grid = self._raster_state(None, WORKING / "state.svg")
         self._error_grid = self._get_candidate_error_grid()
 
@@ -270,22 +284,23 @@ class TargetImage:
         needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
         self.clusters = get_clusters(needs)
 
+        if self.cache_filename is None:
+            return
+        with (self.cache_filename).open("wb") as f:
+            _ = f.write(etree.tostring(self.root))
+
     def _raster_state(
         self, candidate: EtreeElement | None, filename: Path
     ) -> npt.NDArray[np.uint8]:
-        elements = [*self.elements]
+        root = copy.deepcopy(self.root)
         if candidate is not None:
-            elements.append(candidate)
-        bstrings = map(etree.tostring, elements)
-        root = etree.fromstring(
-            self._bhead + b"\n" + b"\n".join(bstrings) + SCREEN_TAIL
-        )
+            root.append(candidate)
         _ = write_root(_INKSCAPE, filename, root)
         png_bytes = rasterize_svg(_INKSCAPE, filename)
         png_image = Image.open(io.BytesIO(png_bytes))
         # TODO: make this into something besides a guess based on filename
         if "state" in filename.stem:
-            png_image.save(WORKING / f"state{len(self.elements):02n}.png")
+            png_image.save(WORKING / f"state{len(self.root):02n}.png")
         return np.array(png_image).astype(np.uint8)[:, :, :3]
 
     def get_color_error_delta(
@@ -297,25 +312,6 @@ class TargetImage:
         error_delta = color_error - self._error_grid
         return _normalize_errors_to_8bit(error_delta)
 
-    def evaluate_next_color(
-        self, idx: int = 0
-    ) -> tuple[tuple[float, float, float], npt.NDArray[np.uint8]]:
-        """Evaluate the next color.
-
-        :return: the error of the next color
-        """
-        next_color = self.get_next_color(idx)
-        return next_color, self.get_color_error_delta(next_color)
-
-
-LUX_LEVELS = 8
-
-RECUR = 8
-COL_SPLITS = 8
-
-import numpy as np
-
-LUX_LIMIT = 1
 
 
 def _get_sum_solid_error(
@@ -468,8 +464,50 @@ def _iter_scored_candidates(
         yield from _iter_scored_candidates_fixed_color(target, col, num_luxs, opacity)
 
 
+def _get_infix(arg_val: Path | float) -> str:
+    """Format a Path instance, int, or float into a valid filename infix.
+
+    :param arg_val: value to format
+    :return: formatted value
+    """
+    if isinstance(arg_val, Path):
+        return arg_val.stem
+    return str(arg_val).replace(".", "p")
+
+
+def load_target_image(image_path: Path) -> TargetImage:
+    """Load a cached TargetImage instance or create a new one.
+
+    :param image_path: path to the image
+    :return: a TargetImage instance
+    """
+    frame = inspect.currentframe()
+    if frame is None:
+        msg = "Failed to load frame from current function."
+        raise RuntimeError(msg)
+    frame = frame.f_back
+    if frame is None:
+        msg = "Failed to load frame from calling function."
+        raise RuntimeError(msg)
+    args_info = inspect.getargvalues(frame)
+    caller_args = [_get_infix(args_info.locals[arg]) for arg in args_info.args][:-1]
+    cache_filename = CACHE / f"{'_'.join(caller_args)}.xml"
+    return TargetImage(image_path, cache_filename=cache_filename)
+
+
+def dump_target_image(target: TargetImage) -> None:
+    """Dump a TargetImage instance to a cache file.
+
+    :param target: target image to dump
+    """
+    if target.cache_filename is None:
+        return
+    with (CACHE / target.cache_filename).open("wb") as file:
+        pickle.dump(target, file)
+
+
 def get_posterize_elements(
-    image_path: str | os.PathLike[str],
+    image_path: os.PathLike[str],
     num_cols: int,
     num_luxs: int,
     opacity: float,
@@ -489,13 +527,15 @@ def get_posterize_elements(
     additional element will be a path element filled with a color that will
     progressively improve the approximation.
     """
-    target = TargetImage(Path(image_path))
-    logging.info(f"old_bg_color: {target.get_last_used_color()}")
-    _replace_background(target, COL_SPLITS)
-    logging.info(f"new_bg_color: {target.get_last_used_color()}")
+    target = load_target_image(Path(image_path))
 
-    for _ in range(max_layers):
-        logging.info(f"layer {len(target.elements)}")
+    if len(target.root) < 2:
+        logging.info(f"old_bg_color: {target.get_last_used_color()}")
+        _replace_background(target, num_cols)
+        logging.info(f"new_bg_color: {target.get_last_used_color()}")
+
+    while len(target.root) < max_layers:
+        logging.info(f"layer {len(target.root) + 1}")
         scored_candidates = list(
             _iter_scored_candidates(target, num_cols, num_luxs, opacity)
         )
@@ -513,7 +553,7 @@ def get_posterize_elements(
             continue
 
         best, good = sorted(best_color)[:2]
-        for _ in range(RECUR):
+        for _ in range(5):
             logging.info(f"recur: {best.lux} {best.error}")
             test = ScoredCandidate(
                 target, best.color, best.layers, (best.lux + good.lux) / 2, opacity
@@ -525,10 +565,10 @@ def get_posterize_elements(
         if best.error > target.sum_error:
             break
         target.append(best.candidate)
-    return target.elements
+    return target.root
 
 
 if __name__ == "__main__":
     _ = get_posterize_elements(
-        PROJECT / "tests/resources/taleb.jpg", 3, LUX_LEVELS, 0.85, 8
+        PROJECT / "tests/resources/taleb.jpg", 3, 8, 0.85, 40
     )

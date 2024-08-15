@@ -10,12 +10,13 @@ from pathlib import Path
 PROJECT = Path(__file__, "../../..").resolve()
 BINARIES = PROJECT / "binaries"
 POTRACE = BINARIES / "potrace.exe"
+CACHE = BINARIES / "cache"
 
 # hold intermediate images used for calculations
 WORKING = BINARIES / "working"
 TEMP = WORKING / "temp.bmp"
 
-for directory in (BINARIES, WORKING, TEMP):
+for directory in (BINARIES, CACHE, WORKING, TEMP):
     directory.mkdir(parents=True, exist_ok=True)
 
 
