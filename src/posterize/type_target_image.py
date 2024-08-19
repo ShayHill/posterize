@@ -142,28 +142,29 @@ class TargetImage:
             self.__error_grid = self.get_error(self._state_grid)
         return self.__error_grid
 
-    # def __render_svg_and_return_path(self, filename: Path | None = None, num: int | None = None) -> Path:
-    #     if num:
-    #         root = self.root
-    #     else:
-    #         root = copy.deepcopy(self.root)
-    #         subelements = root[:num]
-    #         root.clear()
-    #         for subelement in subelements:
-    #             root.append(subelement)
-    #     if filename is None:
-    #         with NamedTemporaryFile(mode="wb", suffix=".svg", delete=False) as f:
-    #             filename = Path(f.name)
-    #     _ = write_root(_INKSCAPE, filename, root)
-    #     return filename
+    def __render_svg_and_return_path(self, filename: Path | None = None, num: int | None = None) -> Path:
+        if num:
+            root = self.root
+        else:
+            root = copy.deepcopy(self.root)
+            subelements = root[:num]
+            root.clear()
+            for subelement in subelements:
+                root.append(subelement)
+        if filename is None:
+            with NamedTemporaryFile(mode="wb", suffix=".svg", delete=False) as f:
+                filename = Path(f.name)
+        _ = write_root(_INKSCAPE, filename, root)
+        return filename
 
-    # def _render_svg(self, filename: Path | None, num: int | None = None) -> Path | None:
-    #     num = num or len(self.root)
-    #     if filename:
-    #         filename = filename.parent / f"{filename.stem}_{num:03n}.svg"
-    #         return self.__render_svg_and_return_path(filename, num)
-    #     filename = self.__render_svg_and_return_path(None, num)
-    #     os.unlink(filename)
+    def _render_svg(self, filename: Path | None, num: int | None = None) -> Path | None:
+        num = num or len(self.root)
+        if filename:
+            filename = filename.parent / f"{filename.stem}_{num:03n}.svg"
+            return self.__render_svg_and_return_path(filename, num)
+        filename = self.__render_svg_and_return_path(None, num)
+        print(f"rendering {filename}")
+        os.unlink(filename)
 
     @property
     def _state_png(self, num: int | None = None) -> ImageType:
@@ -540,8 +541,9 @@ def get_posterize_elements(
         if best.error > target.sum_error:
             break
         target.append(best.candidate)
+        target._render_svg(WORKING / "state.svg")
     return target.root
 
 
 if __name__ == "__main__":
-    _ = get_posterize_elements(PROJECT / "tests/resources/taleb.jpg", 4, 8, 0.85, 40)
+    _ = get_posterize_elements(PROJECT / "tests/resources/taleb.jpg", 3, 8, 0.85, 40)

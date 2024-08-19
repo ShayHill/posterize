@@ -10,10 +10,10 @@ dependencies = [
     "basic-colormath",
     "cluster-colors",
     "numpy",
-    "paragraphs"
+    "paragraphs",
     "stacked-quantile",
     "svg-ultralight",
-    "svgcairo",
+    "svgcairo"
 ]
 
 [project.optional-dependencies]
