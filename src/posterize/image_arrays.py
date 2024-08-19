@@ -97,7 +97,7 @@ def get_quantiles(pixels: _LaPixels, times: Iterable[float]) -> list[float]:
     return q_times
 
 
-def _write_bitmap_from_array(pixels: _LPixels, filename: Path | str) -> None:
+def write_bitmap_from_array(pixels: _LPixels, filename: Path | str) -> None:
     """Create a bitmap file from an nxn array of pixel colors.
 
     :param pixels: (-1, -1, 3) array of rgb unit8 values
@@ -117,7 +117,7 @@ def write_silhouette_bmp(path: str | Path, pixels: _LaPixels) -> None:
     All transparency will be white. All opaque pixels will be black.
     """
     alphas = (255 - pixels[:, :, 1]).astype(np.uint8)
-    _write_bitmap_from_array(alphas, path)
+    write_bitmap_from_array(alphas, path)
 
 
 def _add_white_background(pixels: _LaPixels) -> _LaPixels:
@@ -141,4 +141,4 @@ def write_monochrome_bmp(path: str | Path, pixels: _LaPixels) -> None:
     Replace transparent background with white.
     """
     pixels_ = _add_white_background(pixels)
-    _write_bitmap_from_array(pixels_[:, :, 0], path)
+    write_bitmap_from_array(pixels_[:, :, 0], path)
