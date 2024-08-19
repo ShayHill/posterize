@@ -133,10 +133,15 @@ class TargetImage:
 
         self._image_array = np.array(image).astype(float)
 
+        # cached state and error properties
         self.__state_bytes: bytes | None = None
         self.__state_image: ImageType | None = None
         self.__state_array: npt.NDArray[np.uint8] | None = None
         self.__error_array: npt.NDArray[np.float64] | None = None
+
+    # ===========================================================================
+    #   Cache state and error properties until state changes with append.
+    # ===========================================================================
 
     @property
     def _state_bytes(self) -> bytes:
@@ -166,6 +171,98 @@ class TargetImage:
             self.__error_array = self.get_error(self._state_array)
         return self.__error_array
 
+    @property
+    def sum_error(self) -> float:
+        """Get the sum of the error at the current state.
+
+        Use this to guarantee any new element will improve the approximation.
+        """
+        return float(np.sum(self._error_array))
+
+    def append(self, element: EtreeElement) -> None:
+        """Append an element to the list of elements.
+
+        :param element: element to append
+
+        Update the state and error grids, update the color clusters with original
+        pixel colors weighted by error, and cache the instance.
+        """
+        self.root.append(element)
+
+        # reset all cached properties
+        self.__state_bytes = None
+        self.__state_image = None
+        self.__state_array = None
+        self.__error_array = None
+
+        # re-weight image colors by error per pixel
+        ws = self._error_array[..., np.newaxis]
+        needs = np.concatenate([self._image_array, ws], axis=2).reshape(-1, 4)
+        self.clusters = _get_clusters(needs)
+
+        # cache self.root
+        if self.path_to_cache is None:
+            return
+        with (self.path_to_cache).open("wb") as f:
+            # TODO: try etree.write(file, ...) instead
+            _ = f.write(etree.tostring(self.root))
+
+    # ===========================================================================
+    #   Comparisons to and transformations of self._image_array
+    # ===========================================================================
+
+    def get_error(self, pixels: npt.NDArray[np.uint8]) -> npt.NDArray[np.float64]:
+        """Get the error-per-pixel between a pixel grid and self._image_grid.
+
+        :param pixels: array[n,m,3] grid to compare to self._image_grid
+        :return: error-per-pixel [n,m,1] between grid and self._image_grid
+
+        Values are the Euclidean distance between the pixel grid and the image grid,
+        so will range from 0 to (255 * sqrt(3)) = 441.673.
+
+        NOT the *squared* Euclidean distance, because we're going to map error onto
+        grayscale images, and a linear error gives a better result. The entire
+        process is slow due to rasterization, but we aren't sqrt-ing that many error
+        grids, and at typical image sizes, the operation is nearly instantaneous.
+        """
+        image_as_floats = self._image_array.astype(float)
+        grid_as_floats = pixels.astype(float)
+        return np.sum((image_as_floats - grid_as_floats) ** 2, axis=2) ** 0.5
+
+    def get_color_error_delta(
+        self, color: tuple[float, float, float]
+    ) -> npt.NDArray[np.uint8]:
+        """Get the difference in error between the current state and a solid color."""
+        solid_color = np.full_like(self._image_array, color)
+        color_error = self.get_error(solid_color)
+        error_delta = color_error - self._error_array
+        return normalize_errors_to_8bit(error_delta)
+
+    def monochrome_like(
+        self, color: tuple[float, float, float]
+    ) -> npt.NDArray[np.uint8]:
+        """Get a solid color array the same shape as self._image_grid.
+
+        :param color: color to make the array
+        :return: solid color array
+        """
+        return np.full_like(self._image_array, color).astype(np.uint8)
+
+    def set_background(self, color: tuple[int, int, int]) -> None:
+        """Add an opaque rectangle.
+
+        :param color: color to use
+        """
+        if len(self.root) != 0:
+            msg = "Background color must be set before adding elements."
+            raise ValueError(msg)
+        bg = new_element("rect", width="100%", height="100%", fill=f"rgb{color}")
+        self.append(bg)
+
+    # ===========================================================================
+    #   Render state to disk
+    # ===========================================================================
+
     def __render_svg_and_return_path(
         self, filename: Path | None = None, num: int | None = None
     ) -> Path:
@@ -193,114 +290,6 @@ class TargetImage:
         filename = self.__render_svg_and_return_path(None, num)
         os.unlink(filename.with_suffix(".png"))
 
-    @property
-    def sum_error(self) -> float:
-        """Get the sum of the error at the current state."""
-        return float(np.sum(self._error_array))
-
-    def get_colors(self, num: int = 0) -> set[tuple[int, int, int]]:
-        """Get the most common colors in the image.
-
-        :param num: number of colors to get
-        :return: the num+1 most common colors in the image, largest to smallest
-
-        Return one color that represents the entire self.custers plus the exemplar of
-        cluster after splitting to at most num colors.
-        """
-        colors = {self.clusters.as_cluster.exemplar}
-        if num > 1:
-            self.clusters.split_to_at_most(num)
-            colors |= set(self.clusters.get_rsorted_exemplars())
-        return {float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors}
-
-    def get_next_colors(self, num: int) -> list[tuple[int, int, int]]:
-        """Get the most common colors in the image farthest from last_color.
-
-        :param num: number of colors to get (half will be discarded)
-        :return: the num // most common colors in the image farthest from last_color
-        """
-        last_color = self.get_last_used_color()
-        colors = self.get_colors(num)
-        return sorted(colors, key=lambda x: get_delta_e(x, last_color))[-num // 2 :]
-
-    def set_background(self, color: tuple[int, int, int]) -> None:
-        """Replace the background with the current background color."""
-        if len(self.root) != 0:
-            msg = "Background color must be set before adding elements."
-            raise ValueError(msg)
-        bg = new_element("rect", width="100%", height="100%", fill=f"rgb{color}")
-        self.append(bg)
-
-    def get_solid_grid(
-        self, color: tuple[float, float, float]
-    ) -> npt.NDArray[np.uint8]:
-        """Get a solid color grid the same shape as self._image_grid.
-
-        :param color: color to make the grid
-        :return: solid color grid
-        """
-        return np.full_like(self._image_array, color).astype(np.uint8)
-
-    def get_error(self, grid: npt.NDArray[np.uint8]) -> npt.NDArray[np.float64]:
-        """Get the error-per-pixel between a pixel grid and self._image_grid.
-
-        :param grid: array[n,m,3] grid to compare to self._image_grid
-        :return: error-per-pixel [n,m,1] between grid and self._image_grid
-        """
-        image_as_floats = self._image_array.astype(float)
-        grid_as_floats = grid.astype(float)
-        return np.sum((image_as_floats - grid_as_floats) ** 2, axis=2) ** (1 / 2)
-
-    def _get_candidate_error_grid(
-        self, candidate: EtreeElement | None = None
-    ) -> npt.NDArray[np.float64]:
-        if candidate is None:
-            state_grid = self._state_array
-        else:
-            state_grid = self._raster_state(candidate)
-        return self.get_error(state_grid)
-
-    def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
-        return float(np.sum(self._get_candidate_error_grid(candidate)))
-
-    def get_last_used_color(self) -> tuple[int, int, int]:
-        """Get the last color used.
-
-        :return: the color of the last element added
-        """
-        if len(self.root) == 0:
-            msg = "No elements added yet."
-            raise ValueError(msg)
-        rgb_str = self.root[-1].attrib["fill"][4:-1]  # '255,255,255'
-        r, g, b = map(int, rgb_str.split(","))
-        return (r, g, b)
-
-    def append(self, element: EtreeElement) -> None:
-        """Append an element to the list of elements.
-
-        :param element: element to append
-
-        Update the state and error grids, update the color clusters with original
-        pixel colors weighted by error, and cache the instance.
-        """
-        self.root.append(element)
-
-        # reset all cached properties
-        self.__state_bytes = None
-        self.__state_image = None
-        self.__state_array = None
-        self.__error_array = None
-
-        # re-weight image colors by error per pixel
-        ws = self._error_array[..., np.newaxis]
-        needs = np.concatenate([self._image_array, ws], axis=2).reshape(-1, 4)
-        self.clusters = _get_clusters(needs)
-
-        # cache self.root
-        if self.path_to_cache is None:
-            return
-        with (self.path_to_cache).open("wb") as f:
-            _ = f.write(etree.tostring(self.root))
 
     def _raster_state(self, *candidates: EtreeElement) -> npt.NDArray[np.uint8]:
         """Get a pixel array of the current state (with potential candidates).
@@ -320,21 +309,113 @@ class TargetImage:
             root.append(candidate)
         return elem_to_png_array(root)
 
-    def get_color_error_delta(
-        self, color: tuple[float, float, float]
-    ) -> npt.NDArray[np.uint8]:
-        """What is the difference in error between the current state and a solid color?"""
-        solid_color = np.full_like(self._image_array, color)
-        color_error = self.get_error(solid_color)
-        error_delta = color_error - self._error_array
-        return normalize_errors_to_8bit(error_delta)
+    def render_state(self, output_path: Path, num: int | None = None, *, do_png: bool = False):
+        """Write the current state (or a past state) to disk as svg and png files.
+
+        :param path_stem: path to write the files to
+            path.with_suffix(".svg") will be the svg file
+            path.with_suffix(".png") will be the png file
+        :param num: optional number to select a past state. If None, the current state
+            will be written. If a number is given, the state with num elements will
+            be written as stem_{num:03n}.svg and stem_{num:03n}.png.
+        """
+        if num is None:
+            root_svg = self.root
+            root_png = self._state_image
+        else:
+            root_svg = _slice_elem(self.root)
+            root_png = elem_to_png_image(root_svg)
+            output_path = (
+                output_path.parent / f"{output_path.stem}_{num:03n}{output_path.suffix}"
+            )
+
+        svg_filename = output_path.with_suffix(".svg")
+        png_filename = output_path.with_suffix(".png")
+
+        logging.info(f"writing {output_path.stem}")
+        with open(svg_filename, "wb") as f:
+            _ = f.write(etree.tostring(root_svg))
+        if do_png:
+            root_png.save(png_filename)
+
+
+    # ===========================================================================
+    #   Query and update the color clusters
+    # ===========================================================================
+
+    def get_last_used_color(self) -> tuple[int, int, int]:
+        """Get the last color used.
+
+        :return: the color of the last element added
+        """
+        if len(self.root) == 0:
+            msg = "No elements added yet."
+            raise ValueError(msg)
+        rgb_str = self.root[-1].attrib["fill"][4:-1]  # '255,255,255'
+        r, g, b = map(int, rgb_str.split(","))
+        return (r, g, b)
+
+    def get_colors(self, num: int = 0) -> list[tuple[int, int, int]]:
+        """Get the most common colors in the image.
+
+        :param num: number of colors to get
+        :return: the num+1 most common colors in the image
+
+        Return one color that represents the entire self.custers plus the exemplar of
+        cluster after splitting to at most num clusters.
+        """
+        colors = [self.clusters.as_cluster.exemplar]
+        if num > 1:
+            self.clusters.split_to_at_most(num)
+            colors.extend(self.clusters.get_rsorted_exemplars())
+
+        return [float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors]
+
+    def get_next_colors(self, num: int) -> list[tuple[int, int, int]]:
+        """Get the most common colors in the image farthest from last_color.
+
+        :param num: number of colors to get (half will be discarded)
+        :return: the num // most common colors in the image farthest from last_color
+
+        To increase contrast / interest, select the color of each new elements from a
+        group of image colors that are farthest from the color used in the last
+        element.
+        """
+        colors = self.get_colors(num)
+        if len(self.root) == 0:
+            return colors
+
+        last_color = self.get_last_used_color()
+
+        def dist_from_last(color: tuple[int, int, int]) -> float:
+            """Get the distance from last_color."""
+            return get_delta_e(color, last_color)
+
+        return sorted(colors, key=dist_from_last)[-num // 2 :: -1]
+
+
+
+    def _get_candidate_error_grid(
+        self, candidate: EtreeElement | None = None
+    ) -> npt.NDArray[np.float64]:
+        if candidate is None:
+            state_grid = self._state_array
+        else:
+            state_grid = self._raster_state(candidate)
+        return self.get_error(state_grid)
+
+    def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
+        return float(np.sum(self._get_candidate_error_grid(candidate)))
+
+
+
 
 
 def _get_sum_solid_error(
     target: TargetImage, color: tuple[int, int, int]
 ) -> np.float64:
     """Get one float representing the error of a solid color."""
-    solid = target.get_solid_grid(color)
+    solid = target.monochrome_like(color)
     return np.sum(target.get_error(solid))
 
 
