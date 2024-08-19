@@ -5,23 +5,20 @@
 """
 
 from __future__ import annotations
-import numpy as np
-import os
-from tempfile import NamedTemporaryFile
-import logging
-from pathlib import Path
-import inspect
+
 import copy
+import inspect
+import logging
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import TypeVar
 
+from collections.abc import Iterator
 
-from typing import Iterator, TypeVar
 import numpy as np
 import numpy.typing as npt
-from basic_colormath import (
-    float_tuple_to_8bit_int_tuple,
-    get_delta_e,
-)
-from posterize.rasterize import elem_to_png_bytes, elem_to_png_image, elem_to_png_array
+from basic_colormath import float_tuple_to_8bit_int_tuple, get_delta_e
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
 from cluster_colors.cut_colors import cut_colors
@@ -33,12 +30,11 @@ from PIL.Image import Image as ImageType
 from svg_ultralight import new_element, update_element
 from svg_ultralight.strings import svg_color_tuple
 
-from posterize.image_arrays import (
-    _write_bitmap_from_array,
-)
-from posterize.paths import PROJECT, TEMP, WORKING, CACHE
-from posterize.svg_layers import SvgLayers
 from posterize.arrays import normalize_errors_to_8bit
+from posterize.image_arrays import _write_bitmap_from_array
+from posterize.paths import CACHE, PROJECT, TEMP, WORKING
+from posterize.rasterize import elem_to_png_array, elem_to_png_bytes, elem_to_png_image
+from posterize.svg_layers import SvgLayers
 
 logging.basicConfig(level=logging.INFO)
 
@@ -116,11 +112,7 @@ def load_or_new_root(image: ImageType, path_to_cache: Path | None) -> EtreeEleme
 class TargetImage:
     """A type to store input images and current error."""
 
-    def __init__(
-        self,
-        path: Path,
-        path_to_cache: Path | None = None,
-    ) -> None:
+    def __init__(self, path: Path, path_to_cache: Path | None = None) -> None:
         """Initialize a TargetImage.
 
         :param path: path to the image
@@ -203,9 +195,7 @@ class TargetImage:
         # cache self.root
         if self.path_to_cache is None:
             return
-        with (self.path_to_cache).open("wb") as f:
-            # TODO: try etree.write(file, ...) instead
-            _ = f.write(etree.tostring(self.root))
+        etree.ElementTree(self.root).write(self.path_to_cache)
 
     # ===========================================================================
     #   Comparisons to and transformations of self._image_array
@@ -263,35 +253,9 @@ class TargetImage:
     #   Render state to disk
     # ===========================================================================
 
-    def __render_svg_and_return_path(
-        self, filename: Path | None = None, num: int | None = None
-    ) -> Path:
-        if num:
-            root = self.root
-        else:
-            root = copy.deepcopy(self.root)
-            subelements = root[:num]
-            root.clear()
-            for subelement in subelements:
-                root.append(subelement)
-        if filename is None:
-            with NamedTemporaryFile(mode="wb", suffix=".svg", delete=False) as f:
-                filename = Path(f.name)
-
-        logging.info(f"rendering {filename}")
-        self._state_image.save(filename.with_suffix(".png"))
-        return filename
-
-    def _render_svg(self, filename: Path | None, num: int | None = None) -> Path | None:
-        num = num or len(self.root)
-        if filename:
-            filename = filename.parent / f"{filename.stem}_{num:03n}.svg"
-            return self.__render_svg_and_return_path(filename, num)
-        filename = self.__render_svg_and_return_path(None, num)
-        os.unlink(filename.with_suffix(".png"))
-
-
-    def _raster_state(self, *candidates: EtreeElement) -> npt.NDArray[np.uint8]:
+    def _raster_state_with_candidates(
+        self, *candidates: EtreeElement
+    ) -> npt.NDArray[np.uint8]:
         """Get a pixel array of the current state (with potential candidates).
 
         :param candidates: optional candidates to add to the current state
@@ -309,7 +273,9 @@ class TargetImage:
             root.append(candidate)
         return elem_to_png_array(root)
 
-    def render_state(self, output_path: Path, num: int | None = None, *, do_png: bool = False):
+    def render_state(
+        self, output_path: Path, num: int | None = None, *, do_png: bool = False
+    ):
         """Write the current state (or a past state) to disk as svg and png files.
 
         :param path_stem: path to write the files to
@@ -325,25 +291,21 @@ class TargetImage:
         else:
             root_svg = _slice_elem(self.root)
             root_png = elem_to_png_image(root_svg)
-            output_path = (
-                output_path.parent / f"{output_path.stem}_{num:03n}{output_path.suffix}"
-            )
+            output_path = output_path.parent / f"{output_path.stem}_{num:03n}"
 
         svg_filename = output_path.with_suffix(".svg")
         png_filename = output_path.with_suffix(".png")
 
         logging.info(f"writing {output_path.stem}")
-        with open(svg_filename, "wb") as f:
-            _ = f.write(etree.tostring(root_svg))
+        etree.ElementTree(root_svg).write(svg_filename)
         if do_png:
             root_png.save(png_filename)
-
 
     # ===========================================================================
     #   Query and update the color clusters
     # ===========================================================================
 
-    def get_last_used_color(self) -> tuple[int, int, int]:
+    def _get_last_used_color(self) -> tuple[int, int, int]:
         """Get the last color used.
 
         :return: the color of the last element added
@@ -385,7 +347,7 @@ class TargetImage:
         if len(self.root) == 0:
             return colors
 
-        last_color = self.get_last_used_color()
+        last_color = self._get_last_used_color()
 
         def dist_from_last(color: tuple[int, int, int]) -> float:
             """Get the distance from last_color."""
@@ -393,22 +355,26 @@ class TargetImage:
 
         return sorted(colors, key=dist_from_last)[-num // 2 :: -1]
 
-
-
-    def _get_candidate_error_grid(
-        self, candidate: EtreeElement | None = None
+    def _get_candidate_error_array(
+        self, *candidates: EtreeElement
     ) -> npt.NDArray[np.float64]:
-        if candidate is None:
-            state_grid = self._state_array
-        else:
-            state_grid = self._raster_state(candidate)
-        return self.get_error(state_grid)
+        """Get the error per pixel of the current state with candidates.
 
-    def get_candidate_error(self, candidate: EtreeElement | None = None) -> float:
-        return float(np.sum(self._get_candidate_error_grid(candidate)))
+        :param candidates: optional candidates to add to the current state
+        :return: error per pixel of the current state with candidates
+        """
+        if not candidates:
+            return self._error_array
+        candidate_array = self._raster_state_with_candidates(*candidates)
+        return self.get_error(candidate_array)
 
+    def get_sum_candidate_error(self, *candidates: EtreeElement) -> float:
+        """Get the sum of the error of the current state with candidates.
 
-
+        :param candidates: optional candidates to add to the current state
+        :return: sum of the error of the current state with candidates
+        """
+        return float(np.sum(self._get_candidate_error_array(*candidates)))
 
 
 def _get_sum_solid_error(
@@ -464,9 +430,7 @@ def _get_candidate(
     :return: candidate element
     """
     return update_element(
-        layers(lux),
-        fill=svg_color_tuple(col),
-        opacity=f"{opacity:0.2f}",
+        layers(lux), fill=svg_color_tuple(col), opacity=f"{opacity:0.2f}"
     )
 
 
@@ -510,7 +474,7 @@ class ScoredCandidate:
     def error(self) -> float:
         """Calculate the error of the candidate."""
         if self._error is None:
-            self._error = self.target.get_candidate_error(self.candidate)
+            self._error = self.target.get_sum_candidate_error(self.candidate)
         return self._error
 
     def __lt__(self, other: ScoredCandidate) -> bool:
@@ -649,7 +613,7 @@ def get_posterize_elements(
         if best.error > target.sum_error:
             break
         target.append(best.candidate)
-        target._render_svg(WORKING / "state.svg")
+        target.render_state(WORKING / "state.svg")
     return target.root
 
 
