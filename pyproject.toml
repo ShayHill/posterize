@@ -13,7 +13,7 @@ dependencies = [
     "paragraphs",
     "stacked-quantile",
     "svg-ultralight",
-    "svgcairo"
+    "cairosvg"
 ]
 
 [project.optional-dependencies]

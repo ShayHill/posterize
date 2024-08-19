@@ -7,30 +7,21 @@
 from __future__ import annotations
 import numpy as np
 import os
-from cairosvg import svg2png
 from tempfile import NamedTemporaryFile
-import pickle
-import itertools as it
-from contextlib import suppress
-import warnings
-import io
 import logging
 from pathlib import Path
-import dataclasses
-from svg_ultralight.inkscape import rasterize_svg
 import inspect
 import copy
-import PIL
 
 
-from typing import Iterator, TypeVar, cast
+from typing import Iterator, TypeVar
 import numpy as np
 import numpy.typing as npt
 from basic_colormath import (
-    float_to_8bit_int,
     float_tuple_to_8bit_int_tuple,
     get_delta_e,
 )
+from posterize.rasterize import elem_to_png_bytes, elem_to_png_image, elem_to_png_array
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
 from cluster_colors.cut_colors import cut_colors
@@ -39,14 +30,11 @@ from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from PIL import Image
 from PIL.Image import Image as ImageType
-from svg_ultralight import new_element, update_element, write_root
+from svg_ultralight import new_element, update_element
 from svg_ultralight.strings import svg_color_tuple
 
-from posterize.color_dist import desaturate_by_color
 from posterize.image_arrays import (
     _write_bitmap_from_array,
-    get_image_pixels,
-    write_monochrome_bmp,
 )
 from posterize.paths import PROJECT, TEMP, WORKING, CACHE
 from posterize.svg_layers import SvgLayers
@@ -65,6 +53,7 @@ _SCREEN_HEAD = (
 )
 _SCREEN_TAIL = b"</svg>"
 
+
 def _get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
     """Pool and cut colors.
 
@@ -79,6 +68,25 @@ def _get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
     members = Member.new_members(pooled_and_cut)
     return KMedSupercluster(members)
 
+
+def _slice_elem(elem: EtreeElement, num: int | None = None) -> EtreeElement:
+    """Get a copy of an element with a limited number of children.
+
+    :param elem: element to copy
+    :param num: number of children to copy
+    :return: a copy of the element with a limited number of children
+
+    If the element has more children than the limit, return a copy of the element
+    with the first limit children.
+    """
+    copy_of_elem = copy.deepcopy(elem)
+    if num is None:
+        return copy_of_elem
+    for subelement in copy_of_elem[num:]:
+        copy_of_elem.remove(subelement)
+    return copy_of_elem
+
+
 def _get_singleton_value(set_: set[_T]) -> _T:
     """Get the single value from a set.
 
@@ -87,7 +95,7 @@ def _get_singleton_value(set_: set[_T]) -> _T:
 
     Raise a ValueError if the set does not contain exactly one value.
     """
-    value, = set_
+    (value,) = set_
     return value
 
 
@@ -123,26 +131,44 @@ class TargetImage:
         self.path_to_cache = path_to_cache
         self.clusters = get_image_clusters(path)
 
-        self._image_grid = np.array(image).astype(float)
-        self.__state_grid: npt.NDArray[np.uint8] | None = None
-        self.__error_grid: npt.NDArray[np.float64] | None = None
-        self.__state_png: ImageType | None = None
+        self._image_array = np.array(image).astype(float)
+
+        self.__state_bytes: bytes | None = None
+        self.__state_image: ImageType | None = None
+        self.__state_array: npt.NDArray[np.uint8] | None = None
+        self.__error_array: npt.NDArray[np.float64] | None = None
 
     @property
-    def _state_grid(self) -> npt.NDArray[np.uint8]:
-        """Get the current state grid."""
-        if self.__state_grid is None:
-            self.__state_grid = self._raster_state()
-        return self.__state_grid
+    def _state_bytes(self) -> bytes:
+        """Get and cache the current state as PNG bytes."""
+        if self.__state_bytes is None:
+            self.__state_bytes = elem_to_png_bytes(self.root)
+        return self.__state_bytes
 
     @property
-    def _error_grid(self) -> npt.NDArray[np.float64]:
-        """Get the current error grid."""
-        if self.__error_grid is None:
-            self.__error_grid = self.get_error(self._state_grid)
-        return self.__error_grid
+    def _state_image(self) -> ImageType:
+        """Get and cache the current state as a PIL.Image.Image png instance."""
+        if self.__state_image is None:
+            self.__state_image = elem_to_png_image(self.root)
+        return self.__state_image
 
-    def __render_svg_and_return_path(self, filename: Path | None = None, num: int | None = None) -> Path:
+    @property
+    def _state_array(self) -> npt.NDArray[np.uint8]:
+        """Get and cache the current state as an array of pixels."""
+        if self.__state_array is None:
+            self.__state_array = elem_to_png_array(self.root)
+        return self.__state_array
+
+    @property
+    def _error_array(self) -> npt.NDArray[np.float64]:
+        """Get the current error-per-pixel between state and input."""
+        if self.__error_array is None:
+            self.__error_array = self.get_error(self._state_array)
+        return self.__error_array
+
+    def __render_svg_and_return_path(
+        self, filename: Path | None = None, num: int | None = None
+    ) -> Path:
         if num:
             root = self.root
         else:
@@ -154,7 +180,9 @@ class TargetImage:
         if filename is None:
             with NamedTemporaryFile(mode="wb", suffix=".svg", delete=False) as f:
                 filename = Path(f.name)
-        _ = write_root(_INKSCAPE, filename, root)
+
+        logging.info(f"rendering {filename}")
+        self._state_image.save(filename.with_suffix(".png"))
         return filename
 
     def _render_svg(self, filename: Path | None, num: int | None = None) -> Path | None:
@@ -163,24 +191,12 @@ class TargetImage:
             filename = filename.parent / f"{filename.stem}_{num:03n}.svg"
             return self.__render_svg_and_return_path(filename, num)
         filename = self.__render_svg_and_return_path(None, num)
-        print(f"rendering {filename}")
-        os.unlink(filename)
-
-    @property
-    def _state_png(self, num: int | None = None) -> ImageType:
-        """Get the current state as a PNG."""
-        if self.__state_png is None:
-            png_bytes = cast(None | bytes, svg2png(etree.tostring(self.root)))
-            if not isinstance(png_bytes, bytes):
-                msg = "failed to render PNG."
-                raise ValueError(msg)
-            self.__state_png = Image.open(io.BytesIO(png_bytes))
-        return self.__state_png
+        os.unlink(filename.with_suffix(".png"))
 
     @property
     def sum_error(self) -> float:
         """Get the sum of the error at the current state."""
-        return float(np.sum(self._error_grid))
+        return float(np.sum(self._error_array))
 
     def get_colors(self, num: int = 0) -> set[tuple[int, int, int]]:
         """Get the most common colors in the image.
@@ -223,7 +239,7 @@ class TargetImage:
         :param color: color to make the grid
         :return: solid color grid
         """
-        return np.full_like(self._image_grid, color).astype(np.uint8)
+        return np.full_like(self._image_array, color).astype(np.uint8)
 
     def get_error(self, grid: npt.NDArray[np.uint8]) -> npt.NDArray[np.float64]:
         """Get the error-per-pixel between a pixel grid and self._image_grid.
@@ -231,7 +247,7 @@ class TargetImage:
         :param grid: array[n,m,3] grid to compare to self._image_grid
         :return: error-per-pixel [n,m,1] between grid and self._image_grid
         """
-        image_as_floats = self._image_grid.astype(float)
+        image_as_floats = self._image_array.astype(float)
         grid_as_floats = grid.astype(float)
         return np.sum((image_as_floats - grid_as_floats) ** 2, axis=2) ** (1 / 2)
 
@@ -239,7 +255,7 @@ class TargetImage:
         self, candidate: EtreeElement | None = None
     ) -> npt.NDArray[np.float64]:
         if candidate is None:
-            state_grid = self._state_grid
+            state_grid = self._state_array
         else:
             state_grid = self._raster_state(candidate)
         return self.get_error(state_grid)
@@ -268,38 +284,49 @@ class TargetImage:
         pixel colors weighted by error, and cache the instance.
         """
         self.root.append(element)
-        self.__state_grid = None
-        self.__error_grid = None
-        self.__state_png = None
 
-        ws = self._error_grid[..., np.newaxis]
-        needs = np.concatenate([self._image_grid, ws], axis=2).reshape(-1, 4)
+        # reset all cached properties
+        self.__state_bytes = None
+        self.__state_image = None
+        self.__state_array = None
+        self.__error_array = None
+
+        # re-weight image colors by error per pixel
+        ws = self._error_array[..., np.newaxis]
+        needs = np.concatenate([self._image_array, ws], axis=2).reshape(-1, 4)
         self.clusters = _get_clusters(needs)
 
+        # cache self.root
         if self.path_to_cache is None:
             return
         with (self.path_to_cache).open("wb") as f:
             _ = f.write(etree.tostring(self.root))
 
-
     def _raster_state(self, *candidates: EtreeElement) -> npt.NDArray[np.uint8]:
-        root = copy.deepcopy(self.root)
+        """Get a pixel array of the current state (with potential candidates).
+
+        :param candidates: optional candidates to add to the current state
+        :return: pixel array of the current state
+
+        If no candidates are given, the current state (all elements in self.root) is
+        returned. If candidates *are* given, these will be layered on top of the
+        current state, and error_grid will be calculated for that arrangement.
+        """
+        if not candidates:
+            return self._state_array
+
+        root = _slice_elem(self.root)
         for candidate in candidates:
             root.append(candidate)
-        png_bytes = cast(None | bytes, svg2png(etree.tostring(root)))
-        png_image = Image.open(io.BytesIO(png_bytes))
-        return np.array(png_image).astype(np.uint8)[:, :, :3]
-
-
-
+        return elem_to_png_array(root)
 
     def get_color_error_delta(
         self, color: tuple[float, float, float]
     ) -> npt.NDArray[np.uint8]:
         """What is the difference in error between the current state and a solid color?"""
-        solid_color = np.full_like(self._image_grid, color)
+        solid_color = np.full_like(self._image_array, color)
         color_error = self.get_error(solid_color)
-        error_delta = color_error - self._error_grid
+        error_delta = color_error - self._error_array
         return normalize_errors_to_8bit(error_delta)
 
 
@@ -546,4 +573,4 @@ def get_posterize_elements(
 
 
 if __name__ == "__main__":
-    _ = get_posterize_elements(PROJECT / "tests/resources/taleb.jpg", 3, 8, 0.85, 40)
+    _ = get_posterize_elements(PROJECT / "tests/resources/bird.jpg", 3, 4, 0.35, 40)
