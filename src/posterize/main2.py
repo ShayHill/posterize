@@ -56,7 +56,7 @@ def _get_svglayers_instance_from_color(
     instance.
     """
     bmp_name = TEMP / f"temp_{'-'.join(map(str, col))}.bmp"
-    col_improves = target.get_color_error_delta(col)
+    col_improves = target.get_color_cost_delta_bifurcated(col)
     write_bitmap_from_array(col_improves, bmp_name)
     return SvgLayers(bmp_name, despeckle=1 / 50)
 
@@ -120,7 +120,7 @@ class CandidateScorer:
         """Yield a scored candidate tuple for a given lux level."""
         if lux not in self._scored:
             candidate = self._new_candidate(lux)
-            score = self._target.get_sum_candidate_error(candidate)
+            score = self._target.get_sum_candidate_cost(candidate)
             self._scored[lux] = ScoredCandidate(score, candidate)
         return self._scored[lux]
 
@@ -143,6 +143,7 @@ class CandidateScorer:
         best-scoring lux values. If the average is not better than the second best,
         give up. Additional iterations would just average the same two values.
         """
+        return self.score_candidate(0.5)
         _ = self.score_candidates(0)
         _ = self.score_candidates(1)
         for _ in range(tries):
@@ -153,7 +154,6 @@ class CandidateScorer:
                 break
             logging.info(f"trying {test_lux}")
         logging.info(f"completed with {self.get_sorted_scored()[0]}")
-        return self._scored[0]
         return self._scored[self.get_sorted_scored()[0]]
 
 
@@ -227,4 +227,4 @@ def get_posterize_elements(
 
 
 if __name__ == "__main__":
-    _ = get_posterize_elements(PROJECT / "tests/resources/bird.jpg", 6, 8, 0.85, 40)
+    _ = get_posterize_elements(PROJECT / "tests/resources/bird.jpg", 7, 8, 0.85, 40)
