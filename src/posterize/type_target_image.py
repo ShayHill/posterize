@@ -15,6 +15,7 @@ As elements are appended, the approximation should improve.
 
 from __future__ import annotations
 
+from operator import attrgetter
 import os
 import copy
 from posterize.svg_layers import SvgLayers
@@ -22,14 +23,20 @@ from svg_ultralight import update_element
 import logging
 from svg_ultralight.strings import svg_color_tuple
 from pathlib import Path
-from typing import Annotated, TypeAlias
+from typing import Annotated, TypeAlias, Callable, Any
 import functools
 from posterize import paths
 
 from posterize.image_arrays import write_bitmap_from_array
 import numpy as np
 import numpy.typing as npt
-from basic_colormath import float_tuple_to_8bit_int_tuple, get_delta_e
+from basic_colormath import (
+    float_tuple_to_8bit_int_tuple,
+    get_delta_e,
+    rgbs_to_lab,
+    get_deltas_e_lab,
+    rgb_to_hsv,
+)
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
 from cluster_colors.cut_colors import cut_colors
@@ -44,6 +51,7 @@ from posterize.arrays import normalize_errors_to_8bit
 from posterize.rasterize import elem_to_png_array, elem_to_png_bytes, elem_to_png_image
 
 _PixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,3)"]
+_LabArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,3)"]
 _MonoPixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,1)"]
 _ErrorArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,1)"]
 _RGBTuple = tuple[int, int, int]
@@ -74,6 +82,7 @@ def _get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
     pooled_and_cut = cut_colors(pooled, 512)
     members = Member.new_members(pooled_and_cut)
     return KMedSupercluster(members)
+
 
 
 def _slice_elem(elem: EtreeElement, num: int | None = None) -> EtreeElement:
@@ -147,12 +156,14 @@ class TargetImage:
         self._root = _load_or_new_root(image, path_to_cache)
         self._path_to_cache = path_to_cache
         self._clusters = get_image_clusters(path)
-        self._image_array = np.array(image).astype(float)
+        self._image_rgbs = np.array(image).astype(float)
+        self._image_labs = rgbs_to_lab(self._image_rgbs)
 
         # cached state and cost properties
         self.__state_bytes: bytes | None = None
         self.__state_image: ImageType | None = None
-        self.__state_array: _PixelArray | None = None
+        self.__state_rgbs: _PixelArray | None = None
+        self.__state_labs: _LabArray | None = None
         self.__cost_array: _ErrorArray | None = None
 
     @property
@@ -179,11 +190,18 @@ class TargetImage:
         return self.__state_image
 
     @property
-    def state_array(self) -> _PixelArray:
+    def state_rgbs(self) -> _PixelArray:
         """Get and cache the current state as an array of pixels."""
-        if self.__state_array is None:
-            self.__state_array = elem_to_png_array(self.root)
-        return self.__state_array
+        if self.__state_rgbs is None:
+            self.__state_rgbs = elem_to_png_array(self.root)
+        return self.__state_rgbs
+
+    @property
+    def state_labs(self) -> npt.NDArray[np.float64]:
+        """Get the current state in LAB color space."""
+        if self.__state_labs is None:
+            self.__state_labs = rgbs_to_lab(self.state_rgbs)
+        return self.__state_labs
 
     @property
     def state_cost_array(self) -> _ErrorArray:
@@ -192,7 +210,7 @@ class TargetImage:
         This should decrease after every append.
         """
         if self.__cost_array is None:
-            self.__cost_array = self.get_cost_array(self.state_array)
+            self.__cost_array = self.get_cost_array(self.state_labs)
         return self.__cost_array
 
     @property
@@ -216,13 +234,14 @@ class TargetImage:
         # reset all cached properties
         self.__state_bytes = None
         self.__state_image = None
-        self.__state_array = None
+        self.__state_rgbs = None
+        self.__state_labs = None
         self.__cost_array = None
 
         # re-weight image colors by cost per pixel
         logging.info("reclustering colors")
         ws = self.state_cost_array[..., np.newaxis]
-        needs = np.concatenate([self._image_array, ws], axis=2).reshape(-1, 4)
+        needs = np.concatenate([self._image_rgbs, ws], axis=2).reshape(-1, 4)
         self._clusters = _get_clusters(needs)
         logging.info("done reclustering colors")
 
@@ -235,7 +254,7 @@ class TargetImage:
     #   Comparisons to and transformations of self._image_array
     # ===========================================================================
 
-    def get_cost_array(self, pixels: _PixelArray) -> _ErrorArray:
+    def get_cost_array(self, labs: _LabArray) -> _ErrorArray:
         """Get the cost-per-pixel between a pixel grid and self._image_grid.
 
         :param pixels: array[n,m,3] grid to compare to self._image_grid
@@ -249,9 +268,7 @@ class TargetImage:
         process is slow due to rasterization, but we aren't sqrt-ing that many cost
         grids, and at typical image sizes, the operation is nearly instantaneous.
         """
-        image_as_floats = self._image_array.astype(float)
-        grid_as_floats = pixels.astype(float)
-        return np.sum((image_as_floats - grid_as_floats) ** 2, axis=2) ** 0.5
+        return get_deltas_e_lab(labs, self._image_labs)
 
     def get_color_cost_delta(self, color: _RGBTuple) -> npt.NDArray[np.float64]:
         """Get the difference in cost between the current state and a solid color.
@@ -264,7 +281,7 @@ class TargetImage:
             entirely better or entirely worse, but these cases will be discarded
             later on.
         """
-        solid_color = np.full_like(self._image_array, color)
+        solid_color = np.full_like(self._image_rgbs, color)
         color_cost = self.get_cost_array(solid_color)
         return color_cost - self.state_cost_array
 
@@ -301,7 +318,7 @@ class TargetImage:
         :param color: color to make the array
         :return: solid color array
         """
-        return np.full_like(self._image_array, color).astype(np.uint8)
+        return np.full_like(self._image_rgbs, color).astype(np.uint8)
 
     def set_background(self, color: _RGBTuple) -> None:
         """Add an opaque rectangle.
@@ -329,7 +346,7 @@ class TargetImage:
         current state, and cost_grid will be calculated for that arrangement.
         """
         if not candidates:
-            return self.state_array
+            return self.state_rgbs
 
         root = _slice_elem(self.root)
         for candidate in candidates:
@@ -388,7 +405,7 @@ class TargetImage:
         r, g, b = map(int, rgb_str.split(","))
         return (r, g, b)
 
-    def get_colors(self, num: int = 0) -> list[_RGBTuple]:
+    def get_colors(self, num: int) -> list[_RGBTuple]:
         """Get the most common colors in the image.
 
         :param num: number of colors to get
@@ -404,23 +421,25 @@ class TargetImage:
 
         return [float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors]
 
-    def split_n_back_dist(self, colors: list[_RGBTuple], num: int, _at_num: int = 1) -> list[_RGBTuple]:
-        if _at_num > num:
+    def split_n_back_dist(
+        self, colors: list[_RGBTuple], num: int, _n: int = 1
+    ) -> list[_RGBTuple]:
+        if len(colors) <= num:
             return colors
-        if len(self.root) < _at_num:
+        if len(self.root) < _n:
             return colors
-        if len(colors) < 6:
-            return colors
-        avoid = self._get_nback_used_color(_at_num)
+
+        avoid = self._get_nback_used_color(_n)
 
         def dist_from_avoid(color: _RGBTuple) -> float:
             """Get the distance from last_color."""
             return get_delta_e(color, avoid)
 
-        colors  = sorted(colors, key=dist_from_avoid)[-len(colors) // 2:]
-        return self.split_n_back_dist(colors, num, _at_num + 1)
+        n_keep = max(len(colors) // 2, num)
+        colors = sorted(colors, key=dist_from_avoid)[-n_keep:]
+        return self.split_n_back_dist(colors, num, _n + 1)
 
-    def get_next_colors(self, num: int) -> list[_RGBTuple]:
+    def get_next_colors(self, max_cols: int, min_cols: int) -> list[_RGBTuple]:
         """Get the most common colors in the image farthest from last_color.
 
         :param num: number of colors to get (half will be discarded)
@@ -430,19 +449,8 @@ class TargetImage:
         group of image colors that are farthest from the color used in the last
         element.
         """
-        colors = self.get_colors(num)
-        return self.split_n_back_dist(colors, 2)
-
-        if len(self.root) == 0:
-            return colors
-
-        last_color = self._get_last_used_color()
-
-        def dist_from_last(color: _RGBTuple) -> float:
-            """Get the distance from last_color."""
-            return get_delta_e(color, last_color)
-
-        return sorted(colors, key=dist_from_last)[-num // 2:]
+        colors = self.get_colors(max_cols)
+        return self.split_n_back_dist(colors, min_cols)
 
     def _get_candidate_cost_array(self, *candidates: EtreeElement) -> _ErrorArray:
         """Get the cost per pixel of the current state with candidates.
@@ -479,7 +487,6 @@ class ScoredCandidate:
       the color array to determine cost with color applied.
     * _candidate_array: the current state with the color_array applied where it
       improves the approximation (where _potrace_bitmap is 0)
-    * _candidate_cost_array: the cost of the candidate_array
     """
 
     def __init__(self, target: TargetImage, color: _RGBTuple, opacity: float):
@@ -491,14 +498,18 @@ class ScoredCandidate:
         return self.cost < other.cost
 
     @functools.cached_property
-    def _color_array(self) -> _PixelArray:
-        state_array = self._target.state_array
+    def _color_rgbs(self) -> _PixelArray:
+        state_array = self._target.state_rgbs
         color_array = np.full_like(state_array, self.color)
         return _interp_pixel_arrays(state_array, color_array, self._opacity)
 
     @functools.cached_property
-    def _color_cost_array(self) -> npt.NDArray[np.float64]:
-        return self._target.get_cost_array(self._color_array)
+    def _color_labs(self) -> _LabArray:
+        return rgbs_to_lab(self._color_rgbs)
+
+    @functools.cached_property
+    def _color_cost_per_pixel(self) -> npt.NDArray[np.float64]:
+        return self._target.get_cost_array(self._color_labs)
 
     @property
     def _color_cost_delta(self) -> npt.NDArray[np.float64]:
@@ -512,7 +523,7 @@ class ScoredCandidate:
             entirely better or entirely worse, but these cases will be discarded
             later on.
         """
-        return self._color_cost_array - self._target.state_cost_array
+        return self._color_cost_per_pixel - self._target.state_cost_array
 
     @functools.cached_property
     def _color_mask(self) -> _MonoPixelArray:
@@ -560,27 +571,42 @@ class ScoredCandidate:
         os.unlink(bmp_name)
         return candidate
 
-    @property
-    def _candidate_array(self) -> _PixelArray:
-        candidate_array = np.copy(self._target.state_array)
-        apply_color = np.where(self._color_mask == 0)
-        candidate_array[apply_color] = self._color_array[apply_color]
-        return candidate_array
+    @functools.cached_property
+    def _costs_where_color_is_better(self) -> npt.NDArray[np.float64]:
+        where_color_better = np.where(self._color_mask == 0)
+        return self._color_cost_per_pixel[where_color_better]
 
-    @property
-    def _candidate_cost_array(self) -> _ErrorArray:
-        return self._target.get_cost_array(self._candidate_array)
+    @functools.cached_property
+    def _costs_where_state_is_better(self) -> npt.NDArray[np.float64]:
+        where_state_better = np.where(self._color_mask == 255)
+        return self._target.state_cost_array[where_state_better]
+
+    # @functools.cached_property
+    # def _candidate_array(self) -> _PixelArray:
+    #     logging.info(f"generating cost {self.color}")
+    #     candidate_array = np.copy(self._target.state_rgbs)
+    #     apply_color = np.where(self._color_mask == 0)
+    #     candidate_array[apply_color] = self._color_rgbs[apply_color]
+    #     return candidate_array
 
     @functools.cached_property
     def cost(self) -> float:
         logging.info(f"generating cost {self.color}")
-        color_cost_array = self._color_cost_array
-        state_cost_array = self._target.state_cost_array
-        where_color_better = np.where(self._color_mask == 0)
-        where_state_better = np.where(self._color_mask == 255)
-        sum_color_cost = np.sum(color_cost_array[where_color_better])
-        sum_state_cost = np.sum(state_cost_array[where_state_better])
+        sum_color_cost = np.sum(self._costs_where_color_is_better)
+        sum_state_cost = np.sum(self._costs_where_state_is_better)
         return float(sum_color_cost + sum_state_cost)
+
+    @functools.cached_property
+    def sort_key(self) -> float:
+        return self.cost * self.max_cost
+
+    @functools.cached_property
+    def max_cost(self) -> float:
+        logging.info(f"generating max cost {self.color}")
+        max_color_cost = max(self._costs_where_color_is_better)
+        max_state_cost = max(self._costs_where_state_is_better)
+        return max(max_color_cost, max_state_cost)
+
 
 def _get_infix(arg_val: Path | float) -> str:
     """Format a Path instance, int, or float into a valid filename infix.
@@ -589,8 +615,9 @@ def _get_infix(arg_val: Path | float) -> str:
     :return: formatted value
     """
     if isinstance(arg_val, Path):
-        return arg_val.stem.replace(' ', '_')
+        return arg_val.stem.replace(" ", "_")
     return str(arg_val).replace(".", "p")
+
 
 def load_target_image(image_path: Path, *args: float | Path) -> TargetImage:
     """Load a cached TargetImage instance or create a new one.
@@ -605,7 +632,7 @@ def load_target_image(image_path: Path, *args: float | Path) -> TargetImage:
     return TargetImage(image_path, path_to_cache=path_to_cache)
 
 
-def _replace_background(target: TargetImage, num: int, idx: int = 0) -> None:
+def _select_background_color(target: TargetImage, num: int, idx: int = 0) -> None:
     """Replace the default background color with one of the cluster color exemplars.
 
     :param target: target image to replace the background of
@@ -616,16 +643,20 @@ def _replace_background(target: TargetImage, num: int, idx: int = 0) -> None:
     logging.info("replacing default background color")
     cols = target.get_colors(num)
     candidates = [ScoredCandidate(target, col, 1) for col in cols]
-    # target.set_background(min(scored)[1])
     # TODO: restore background selection
+    # target.set_background((149, 61, 41))
     target.set_background(min(candidates).color)
+
 
 def get_posterize_elements(
     image_path: os.PathLike[str],
-    num_cols: int,
-    num_luxs: int,
+    max_cols: int,
+    min_cols: int,
     opacity: float,
     max_layers: int,
+    max_cost_priority: int = 0,
+    *,
+    do_ignore_cache: bool = False,
 ) -> EtreeElement:
     """Return a list of elements to create a posterized image.
 
@@ -641,17 +672,28 @@ def get_posterize_elements(
     additional element will be a path element filled with a color that will
     progressively improve the approximation.
     """
-    target = load_target_image(Path(image_path), num_cols, opacity)
+    if do_ignore_cache:
+        target = TargetImage(Path(image_path))
+    else:
+        target = load_target_image(
+            Path(image_path), max_cols, min_cols, opacity, max_cost_priority
+        )
 
     if len(target.root) < 1:
-        _replace_background(target, num_cols)
+        _select_background_color(target, max_cols)
+        target.render_state(paths.WORKING / "state")
 
     while len(target.root) < max_layers:
         logging.info(f"layer {len(target.root) + 1}")
-        cols = target.get_next_colors(num_cols)
-        # logging.info(f"colors: {cols}")
+        if max_cost_priority and (len(target.root) - 1) % max_cost_priority == 0:
+            cols = target.get_next_colors(max_cols, max(min_cols, max_cols // 2))
+            sort_key = attrgetter("max_cost")
+        else:
+            cols = target.get_next_colors(max_cols, min_cols)
+            sort_key = attrgetter("sort_key")
         candidates = [ScoredCandidate(target, col, opacity) for col in cols]
-        best_candidate = min(candidates)
+        best_candidate = min(candidates, key=sort_key)
+
         if best_candidate.cost > target.sum_state_cost:
             logging.info("no more improvement found")
             break
@@ -662,5 +704,14 @@ def get_posterize_elements(
 
     return target.root
 
+
 if __name__ == "__main__":
-    _ = get_posterize_elements(paths.PROJECT / "tests/resources/you_the_living.jpg", 64, 8, 0.85, 24)
+    _ = get_posterize_elements(
+        paths.PROJECT / "tests/resources/adidas.jpg",
+        12,
+        3,
+        0.85,
+        48,
+        0,
+        do_ignore_cache=True,
+    )
