@@ -11,6 +11,7 @@ _MAX_8BIT = 255
 _BIG_INT = 2**32 - 1
 _BIG_SCALE = _BIG_INT / _MAX_8BIT
 
+
 def _get_iqr_bounds(floats: npt.NDArray[np.float64]) -> tuple[np.float64, np.float64]:
     """Get the IQR bounds of a set of floats.
 

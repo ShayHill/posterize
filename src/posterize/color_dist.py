@@ -24,10 +24,9 @@ from __future__ import annotations
 
 import dataclasses
 import itertools as it
+from collections.abc import Iterable
 from operator import attrgetter
 from typing import Annotated, cast
-
-from collections.abc import Iterable
 
 import numpy as np
 from basic_colormath import float_to_8bit_int

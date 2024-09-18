@@ -5,7 +5,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import  TypeVar
+from typing import TypeVar
 
 import numpy as np
 from lxml.etree import _Element as EtreeElement  # type: ignore
@@ -75,8 +75,6 @@ def _get_candidate(
     return update_element(
         layers(lux), fill=svg_color_tuple(col), opacity=f"{opacity:0.2f}"
     )
-
-
 
 
 @dataclasses.dataclass
@@ -164,7 +162,7 @@ def _get_infix(arg_val: Path | float) -> str:
     :return: formatted value
     """
     if isinstance(arg_val, Path):
-        return arg_val.stem.replace(' ', '_')
+        return arg_val.stem.replace(" ", "_")
     return str(arg_val).replace(".", "p")
 
 
@@ -179,6 +177,7 @@ def load_target_image(image_path: Path, *args: float | Path) -> TargetImage:
     cache_identifiers = [_get_infix(x) for x in (image_path, *args)]
     path_to_cache = CACHE / f"{'_'.join(cache_identifiers)}.xml"
     return TargetImage(image_path, path_to_cache=path_to_cache)
+
 
 def get_posterize_elements(
     image_path: os.PathLike[str],

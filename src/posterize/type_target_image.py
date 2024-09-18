@@ -15,27 +15,24 @@ As elements are appended, the approximation should improve.
 
 from __future__ import annotations
 
-from operator import attrgetter
-import os
 import copy
-from posterize.svg_layers import SvgLayers
-from svg_ultralight import update_element
-import logging
-from svg_ultralight.strings import svg_color_tuple
-from pathlib import Path
-from typing import Annotated, TypeAlias, Callable, Any
 import functools
-from posterize import paths
+import logging
+import os
+from operator import attrgetter
+from pathlib import Path
+from typing import Annotated, Any, TypeAlias
 
-from posterize.image_arrays import write_bitmap_from_array
+from collections.abc import Callable
+
 import numpy as np
 import numpy.typing as npt
 from basic_colormath import (
     float_tuple_to_8bit_int_tuple,
     get_delta_e,
-    rgbs_to_lab,
     get_deltas_e_lab,
     rgb_to_hsv,
+    rgbs_to_lab,
 )
 from cluster_colors import KMedSupercluster, get_image_clusters
 from cluster_colors.clusters import Member
@@ -45,10 +42,14 @@ from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from PIL import Image
 from PIL.Image import Image as ImageType
-from svg_ultralight import new_element
+from svg_ultralight import new_element, update_element
+from svg_ultralight.strings import svg_color_tuple
 
+from posterize import paths
 from posterize.arrays import normalize_errors_to_8bit
+from posterize.image_arrays import write_bitmap_from_array
 from posterize.rasterize import elem_to_png_array, elem_to_png_bytes, elem_to_png_image
+from posterize.svg_layers import SvgLayers
 
 _PixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,3)"]
 _LabArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,3)"]
@@ -82,7 +83,6 @@ def _get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
     pooled_and_cut = cut_colors(pooled, 512)
     members = Member.new_members(pooled_and_cut)
     return KMedSupercluster(members)
-
 
 
 def _slice_elem(elem: EtreeElement, num: int | None = None) -> EtreeElement:

@@ -44,7 +44,7 @@ repos:
         # files: .pre-commit-config.yaml
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: v1.10.0
+  rev: v1.11.2
   hooks:
   - id: mypy
     name: mypy
@@ -66,14 +66,14 @@ repos:
     args: ["--profile", "black", "--filter-files", "--combine-as", "honor--noqa"]
 
 - repo: https://github.com/psf/black
-  rev: 24.4.2
+  rev: 24.8.0
   hooks:
   - id: black
     language_version: python3.10
     args: ["--skip-magic-trailing-comma"]
 
 - repo: https://github.com/asottile/pyupgrade
-  rev: v3.15.2
+  rev: v3.17.0
   hooks:
   - args:
     - --py310-plus
@@ -123,7 +123,7 @@ repos:
   # S320: Using lxml to parse untrusted data
   # PLR0913: too many arguments for function
   # PYI034: __enter__ methods usually return 'self'
-  rev: 'v0.4.3'
+  rev: 'v0.6.5'
   hooks:
     - id: ruff
       exclude: "tests"
@@ -135,6 +135,6 @@ repos:
 
 # reads pyproject.toml for additional config
 - repo: https://github.com/RobertCraigie/pyright-python
-  rev: v1.1.362
+  rev: v1.1.380
   hooks:
     - id: pyright
