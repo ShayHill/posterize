@@ -7,8 +7,8 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "basic-colormath",
-    "cluster-colors>=2.3",
+    "basic-colormath>=0.4",
+    "cluster-colors>=2.4",
     "numpy",
     "paragraphs",
     "stacked-quantile",
