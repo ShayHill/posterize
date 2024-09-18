@@ -34,8 +34,12 @@ from basic_colormath import (
     rgb_to_hsv,
     rgbs_to_lab,
 )
-from cluster_colors import KMedSupercluster, get_image_clusters
-from cluster_colors.clusters import Member
+
+# TODO: import SuperclusterBase directly from cluster_colors
+from basic_colormath import get_delta_e_matrix, floats_to_uint8
+from cluster_colors.cluster_members import Members
+from cluster_colors.cluster_supercluster import SuperclusterBase
+from cluster_colors import get_image_clusters
 from cluster_colors.cut_colors import cut_colors
 from cluster_colors.pool_colors import pool_colors
 from lxml import etree
@@ -69,20 +73,29 @@ _SCREEN_TAIL = b"</svg>"
 
 _BIG_INT = 2**31 - 1
 
+class Supercluster(SuperclusterBase):
+    """A SuperclusterBase that uses divisive clustering."""
 
-def _get_clusters(colors: npt.NDArray[np.float64]) -> KMedSupercluster:
+    quality_metric = "avg_error"
+    quality_centroid = "weighted_medoid"
+    assignment_centroid = "weighted_medoid"
+    clustering_method = "divisive"
+
+
+def _get_clusters(colors: npt.NDArray[np.float64]) -> Supercluster:
     """Pool and cut colors.
 
     :param colors: colors to pool and cut
     :return: pooled and cut colors
 
     Trim the number of colors in an image to a manageable number (512), then create a
-    KMedSupercluster instance.
+    Supercluster:instance.
     """
     pooled = pool_colors(colors)
     pooled_and_cut = cut_colors(pooled, 512)
-    members = Member.new_members(pooled_and_cut)
-    return KMedSupercluster(members)
+    pmatrix = get_delta_e_matrix(pooled_and_cut[:, :3])
+    print("pmatric calculated")
+    return Supercluster.from_stacked_vectors(pooled_and_cut, pmatrix=pmatrix)
 
 
 def _slice_elem(elem: EtreeElement, num: int | None = None) -> EtreeElement:
@@ -414,11 +427,11 @@ class TargetImage:
         Return one color that represents the entire self.custers plus the exemplar of
         cluster after splitting to at most num clusters.
         """
-        colors = [self._clusters.as_cluster.exemplar]
-        if num > 1:
-            self._clusters.split_to_at_most(num)
-            colors.extend(self._clusters.get_rsorted_exemplars())
-
+        self._clusters.set_n(1)
+        colors_1 = self._clusters.get_as_stacked_vectors()[:,:-1]
+        self._clusters.set_n(num)
+        colors_n = self._clusters.get_as_stacked_vectors()[:,:-1]
+        colors = floats_to_uint8(np.vstack([colors_1, colors_n]))
         return [float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors]
 
     def split_n_back_dist(
@@ -708,7 +721,7 @@ def get_posterize_elements(
 if __name__ == "__main__":
     _ = get_posterize_elements(
         paths.PROJECT / "tests/resources/adidas.jpg",
-        12,
+        11,
         3,
         0.85,
         48,
