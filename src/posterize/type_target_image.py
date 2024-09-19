@@ -19,6 +19,7 @@ import copy
 import functools
 import logging
 import os
+import itertools as it
 from operator import attrgetter
 from pathlib import Path
 from typing import Annotated, Any, TypeAlias
@@ -28,6 +29,7 @@ from collections.abc import Callable
 import numpy as np
 import numpy.typing as npt
 from basic_colormath import (
+    get_delta_e_matrix,
     float_tuple_to_8bit_int_tuple,
     get_delta_e,
     get_deltas_e_lab,
@@ -38,10 +40,11 @@ from basic_colormath import (
 # TODO: import SuperclusterBase directly from cluster_colors
 from basic_colormath import get_delta_e_matrix, floats_to_uint8
 from cluster_colors.cluster_members import Members
+from cluster_colors.image_colors import stack_image_colors
 from cluster_colors.cluster_supercluster import SuperclusterBase
-from cluster_colors import get_image_clusters
 from cluster_colors.cut_colors import cut_colors
 from cluster_colors.pool_colors import pool_colors
+import basic_colormath as cm
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from PIL import Image
@@ -73,6 +76,7 @@ _SCREEN_TAIL = b"</svg>"
 
 _BIG_INT = 2**31 - 1
 
+
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
@@ -80,6 +84,28 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
+
+# TODO: use imported get_image_clusters after updating to cluster_colors 2.5
+def get_image_clusters(
+    filename: Path | str,
+    *,
+    ignore_cache: bool = False,
+) -> Supercluster:
+    """Get all colors in an image as a single KMedSupercluster instance.
+
+    :param filename: the path to an image file
+    :param num_colors: the number of colors to reduce to. The default of 512 will
+        cluster quickly down to medium-sized clusters.
+    :param pool_bits: the number of bits to pool colors by. The default of 6 is a
+    good value. You can probably just ignore this parameter, but it's here to
+        eliminate a "magic number" from the code.
+    :param ignore_cache: if True, ignore any cached results and recompute the colors.
+    :return: a KMedSupercluster instance containing all the colors in the image
+    """
+    stacked_colors = stack_image_colors(filename, 512, 6, ignore_cache=ignore_cache)
+    pmatrix = get_delta_e_matrix(stacked_colors[:, :3])
+    return Supercluster.from_stacked_vectors(stacked_colors, pmatrix=pmatrix)
 
 
 def _get_clusters(colors: npt.NDArray[np.float64]) -> Supercluster:
@@ -281,7 +307,7 @@ class TargetImage:
         process is slow due to rasterization, but we aren't sqrt-ing that many cost
         grids, and at typical image sizes, the operation is nearly instantaneous.
         """
-        return get_deltas_e_lab(labs, self._image_labs)
+        return cm.get_deltas_e_lab(labs, self._image_labs)
 
     def get_color_cost_delta(self, color: _RGBTuple) -> npt.NDArray[np.float64]:
         """Get the difference in cost between the current state and a solid color.
@@ -398,6 +424,16 @@ class TargetImage:
     #   Query and update the color clusters
     # ===========================================================================
 
+    def _get_element_color(self, element: EtreeElement) -> _RGBTuple:
+        """Get the color of an element.
+
+        :param element: element to get the color of
+        :return: color of the element
+        """
+        rgb_str = self.root[-1].attrib["fill"][4:-1]  # '255,255,255'
+        r, g, b = map(int, rgb_str.split(","))
+        return (r, g, b)
+
     def _get_last_used_color(self) -> _RGBTuple:
         """Get the last color used.
 
@@ -406,9 +442,7 @@ class TargetImage:
         if len(self.root) == 0:
             msg = "No elements added yet."
             raise ValueError(msg)
-        rgb_str = self.root[-1].attrib["fill"][4:-1]  # '255,255,255'
-        r, g, b = map(int, rgb_str.split(","))
-        return (r, g, b)
+        return self._get_element_color(self.root[-1])
 
     def _get_nback_used_color(self, n: int) -> _RGBTuple:
         if len(self.root) < n:
@@ -427,11 +461,13 @@ class TargetImage:
         Return one color that represents the entire self.custers plus the exemplar of
         cluster after splitting to at most num clusters.
         """
-        self._clusters.set_n(1)
-        colors_1 = self._clusters.get_as_stacked_vectors()[:,:-1]
-        self._clusters.set_n(num)
-        colors_n = self._clusters.get_as_stacked_vectors()[:,:-1]
-        colors = floats_to_uint8(np.vstack([colors_1, colors_n]))
+        # self._clusters.set_n(1)
+        # colors_1 = self._clusters.get_as_stacked_vectors()[:,:-1]
+        # self._clusters.set_n(num)
+        self._clusters.set_max_avg_error(12)
+        colors_n = self._clusters.get_as_stacked_vectors("weighted_medoid")[:, :-1]
+        print(f"generated {len(colors_n)} colors")
+        colors = floats_to_uint8(colors_n)
         return [float_tuple_to_8bit_int_tuple((r, g, b)) for r, g, b in colors]
 
     def split_n_back_dist(
@@ -463,6 +499,7 @@ class TargetImage:
         element.
         """
         colors = self.get_colors(max_cols)
+        return colors
         return self.split_n_back_dist(colors, min_cols)
 
     def _get_candidate_cost_array(self, *candidates: EtreeElement) -> _ErrorArray:
@@ -611,13 +648,14 @@ class ScoredCandidate:
 
     @functools.cached_property
     def sort_key(self) -> float:
+        return self._costs_where_state_is_better.shape[0]
         return self.cost * self.max_cost
 
     @functools.cached_property
     def max_cost(self) -> float:
         logging.info(f"generating max cost {self.color}")
-        max_color_cost = max(self._costs_where_color_is_better)
-        max_state_cost = max(self._costs_where_state_is_better)
+        max_color_cost = max(self._costs_where_color_is_better, default=0)
+        max_state_cost = max(self._costs_where_state_is_better, default=0)
         return max(max_color_cost, max_state_cost)
 
 
