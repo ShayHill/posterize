@@ -40,8 +40,11 @@ from basic_colormath import (
 # TODO: import SuperclusterBase directly from cluster_colors
 from basic_colormath import get_delta_e_matrix, floats_to_uint8
 from cluster_colors.cluster_members import Members
-from cluster_colors.image_colors import stack_image_colors
+
+# from cluster_colors.image_colors import stack_image_colors
+from cluster_colors import get_image_supercluster, stack_pool_cut_image_colors
 from cluster_colors.cluster_supercluster import SuperclusterBase
+from cluster_colors.cluster_cluster import Cluster
 from cluster_colors.cut_colors import cut_colors
 from cluster_colors.pool_colors import pool_colors
 import basic_colormath as cm
@@ -103,7 +106,9 @@ def get_image_clusters(
     :param ignore_cache: if True, ignore any cached results and recompute the colors.
     :return: a KMedSupercluster instance containing all the colors in the image
     """
-    stacked_colors = stack_image_colors(filename, 512, 6, ignore_cache=ignore_cache)
+    stacked_colors = stack_pool_cut_image_colors(
+        filename, 512, 6, ignore_cache=ignore_cache
+    )
     pmatrix = get_delta_e_matrix(stacked_colors[:, :3])
     return Supercluster.from_stacked_vectors(stacked_colors, pmatrix=pmatrix)
 
@@ -177,6 +182,41 @@ def _interp_pixel_arrays(
     as_floats = np.clip(as_floats / 255, 0, 1)
     as_ints = (as_floats * _BIG_INT).astype(int)
     return (as_ints >> 23).astype(np.uint8)
+
+
+def find_nearest_member(supercluster: Supercluster, color: _RGBTuple) -> int:
+    """Find the nearest member of a supercluster to a color.
+
+    :param supercluster: supercluster to search
+    :param color: color to find the nearest member of
+    :return: index of the nearest member of the supercluster to the color
+    """
+    mat = cm.get_delta_e_matrix(np.array([color]), supercluster.members.vectors)
+    return int(np.argmin(mat))
+
+
+def find_member_cluster(supercluster: Supercluster, member: int) -> Cluster:
+    """Find the cluster of a member.
+
+    :param supercluster: supercluster to search
+    :param member: member to find the cluster of
+    :return: cluster of the member
+    """
+    return next(x for x in supercluster.clusters if member in x.ixs)
+
+
+def has_member(supercluster: Supercluster, member: int) -> bool:
+    """Find the cluster of a member.
+
+    :param supercluster: supercluster to search
+    :param member: member to find the cluster of
+    :return: cluster of the member
+    """
+    try:
+        _ = find_member_cluster
+        return True
+    except StopIteration:
+        return False
 
 
 class TargetImage:
@@ -277,12 +317,17 @@ class TargetImage:
         self.__state_labs = None
         self.__cost_array = None
 
-        # re-weight image colors by cost per pixel
-        logging.info("reclustering colors")
-        ws = self.state_cost_array[..., np.newaxis]
-        needs = np.concatenate([self._image_rgbs, ws], axis=2).reshape(-1, 4)
-        self._clusters = _get_clusters(needs)
-        logging.info("done reclustering colors")
+        to_remove = int(element.attrib["id"])
+
+        self._clusters.set_n(1)
+
+        while True:
+            cluster_used = self._clusters.find_member(to_remove)
+            if self._clusters.clusters[cluster_used].max_error < 12:
+                break
+            self._clusters.split()
+
+        self._clusters = self._clusters.without_clusters(cluster_used)
 
         # cache self.root
         if self._path_to_cache is None:
@@ -364,10 +409,13 @@ class TargetImage:
 
         :param color: color to use
         """
+        r, g, b = map(int, self._clusters.members.vectors[color])
         if len(self.root) != 0:
             msg = "Background color must be set before adding elements."
             raise ValueError(msg)
-        bg = new_element("rect", width="100%", height="100%", fill=f"rgb{color}")
+        bg = new_element(
+            "rect", id=f"{color}", width="100%", height="100%", fill=f"rgb{(r, g, b)}"
+        )
         self.append(bg)
 
     # ===========================================================================
@@ -387,9 +435,10 @@ class TargetImage:
         if not candidates:
             return self.state_rgbs
 
-        root = _slice_elem(self.root)
+        root = copy.deepcopy(self.root)
         for candidate in candidates:
             root.append(candidate)
+
         return elem_to_png_array(root)
 
     def render_state(
@@ -452,6 +501,17 @@ class TargetImage:
         r, g, b = map(int, rgb_str.split(","))
         return (r, g, b)
 
+    @functools.cached_property
+    def vibrant_colors(self) -> list[int]:
+        vectors = self._clusters.members.vectors
+        v_max = np.max(vectors, axis=1)
+        v_min = np.min(vectors, axis=1)
+        v_vib = v_max - v_min
+        threshold = np.percentile(v_vib, 90)
+        vibrant = np.where(v_vib >= threshold)[0]
+        print(f"vibrant colors: {len(vibrant)}")
+        return vibrant
+
     def get_colors(self, num: int) -> list[_RGBTuple]:
         """Get the most common colors in the image.
 
@@ -461,10 +521,36 @@ class TargetImage:
         Return one color that represents the entire self.custers plus the exemplar of
         cluster after splitting to at most num clusters.
         """
-        # self._clusters.set_n(1)
-        # colors_1 = self._clusters.get_as_stacked_vectors()[:,:-1]
-        # self._clusters.set_n(num)
-        self._clusters.set_max_avg_error(12)
+        self._clusters.set_max_avg_error(8)
+
+        vibrant = self.vibrant_colors
+        vibrant = [x for x in vibrant if x in self._clusters.ixs]
+
+
+        pmat = self._clusters.members.pmatrix
+        while True:
+            clusters = [self._clusters.find_member(x) for x in vibrant]
+            medoids = [self._clusters.clusters[x].weighted_medoid for x in clusters]
+            if all(pmat[x, y] < 8 for x, y in zip(vibrant, medoids)):
+                break
+            self._clusters.split()
+
+        cols = [x.weighted_medoid for x in self._clusters.clusters]
+        # if vibrant:
+        #     vclusters = {self._clusters.find_member(x) for x in vibrant}
+        #     # vclusters = {self._clusters.clusters[x] for x in vclusters}
+        #     scl = self._clusters
+        #     aaa = set(range(len(scl.clusters)))
+        #     bbb = vclusters
+        #     supercluster = scl.without_clusters(*(aaa - vclusters))
+        #     supercluster.set_max_avg_error(8)
+        #     cols = [c.weighted_medoid for c in supercluster.clusters]
+        #     print("-------------------------")
+
+        print(f"generated {len(cols)} colors")
+
+        return cols
+
         colors_n = self._clusters.get_as_stacked_vectors("weighted_medoid")[:, :-1]
         print(f"generated {len(colors_n)} colors")
         colors = floats_to_uint8(colors_n)
@@ -541,7 +627,8 @@ class ScoredCandidate:
 
     def __init__(self, target: TargetImage, color: _RGBTuple, opacity: float):
         self._target = target
-        self.color = color
+        self._color_idx = color
+        self.color = target._clusters.members.vectors[color]
         self._opacity = opacity
 
     def __lt__(self, other: ScoredCandidate) -> bool:
@@ -615,6 +702,7 @@ class ScoredCandidate:
         svg_layers = SvgLayers(bmp_name, despeckle=0.02)
         candidate = update_element(
             svg_layers(0.5),
+            id=f"{int(self._color_idx)}",
             fill=svg_color_tuple(self.color),
             opacity=f"{self._opacity:0.2f}",
         )
@@ -648,8 +736,8 @@ class ScoredCandidate:
 
     @functools.cached_property
     def sort_key(self) -> float:
-        return self._costs_where_state_is_better.shape[0]
-        return self.cost * self.max_cost
+        # return self._costs_where_state_is_better.shape[0]
+        return self.cost #  * self.max_cost
 
     @functools.cached_property
     def max_cost(self) -> float:
@@ -696,7 +784,7 @@ def _select_background_color(target: TargetImage, num: int, idx: int = 0) -> Non
     candidates = [ScoredCandidate(target, col, 1) for col in cols]
     # TODO: restore background selection
     # target.set_background((149, 61, 41))
-    target.set_background(min(candidates).color)
+    target.set_background(min(candidates)._color_idx)
 
 
 def get_posterize_elements(
@@ -751,6 +839,7 @@ def get_posterize_elements(
         logging.info(f"best candidate: {best_candidate.color}")
         logging.info(f"best cost: {best_candidate.cost}")
         target.append(best_candidate.candidate)
+
         target.render_state(paths.WORKING / "state")
 
     return target.root
@@ -758,7 +847,7 @@ def get_posterize_elements(
 
 if __name__ == "__main__":
     _ = get_posterize_elements(
-        paths.PROJECT / "tests/resources/adidas.jpg",
+        paths.PROJECT / "tests/resources/parrot.jpg",
         11,
         3,
         0.85,
