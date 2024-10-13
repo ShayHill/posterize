@@ -4,8 +4,14 @@
 :created: 2023-07-06
 """
 
+# TODO: clean up unused paths
+
+from tempfile import TemporaryFile
 import enum
 from pathlib import Path
+
+with TemporaryFile() as f:
+    CACHE_DIR = Path(f.name).parent / "cluster_colors_cache"
 
 PROJECT = Path(__file__, "../../..").resolve()
 BINARIES = PROJECT / "binaries"

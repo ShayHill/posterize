@@ -1,41 +1,24 @@
-import numpy as np
-from pathlib import Path
-from typing import TypeAlias, Annotated, cast
-from numpy import typing as npt
-from posterize import paths
-from tempfile import TemporaryFile
-from svg_ultralight import new_element, update_element
-from svg_ultralight.strings import svg_color_tuple
-from basic_colormath import floats_to_uint8
-import subprocess
-
+import functools
 import logging
+import subprocess
 from operator import itemgetter
+from pathlib import Path
+from tempfile import TemporaryFile
+from typing import Annotated, TypeAlias, TypeVar, cast
 
-from cluster_colors import EmptySuperclusterError
-from cluster_colors import get_image_supercluster, stack_pool_cut_image_colors
+import numpy as np
+from basic_colormath import floats_to_uint8
 from cluster_colors.cluster_supercluster import SuperclusterBase
-from cluster_colors.cluster_cluster import Cluster
-from cluster_colors.cut_colors import cut_colors
-from cluster_colors.pool_colors import pool_colors
-import basic_colormath as cm
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
+from numpy import typing as npt
 from PIL import Image
 from PIL.Image import Image as ImageType
-from svg_ultralight import new_element, update_element, new_svg_root, write_svg
+from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
-from cluster_colors import get_image_supercluster, stack_pool_cut_image_colors
-from basic_colormath import (
-    get_delta_e,
-    get_delta_e_matrix,
-    floats_to_uint8,
-    get_sqeuclidean,
-    get_sqeuclidean_matrix,
-)
-import functools
 
-import time
+from posterize import paths
+from posterize.quantization import new_supercluster_with_quantized_image
 
 logging.basicConfig(level=logging.INFO)
 
@@ -61,29 +44,7 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-def apply_colormap(
-    path: Path, colormap: _FPArray, *, ignore_cache: bool = False
-) -> _IndexMatrix:
-    """Map an image to a colormap.
-
-    :param path: path to the image
-    :param colormap: colormap to map to
-    :return: index matrix of the image mapped to the colormap
-    """
-    cache_path = CACHE_DIR / f"{path.stem}_colormapped.npy"
-    if not ignore_cache and cache_path.exists():
-        return np.load(cache_path)
-
-    image = Image.open(path)
-    image = image.convert("RGB")
-    image_rgb_vector = np.array(image).astype(float).reshape(-1, 3)
-    image_idx_vector = np.argmin(
-        get_sqeuclidean_matrix(image_rgb_vector, colormap), axis=1
-    )
-    image_idx_matrix = image_idx_vector.reshape(image.size[1], image.size[0])
-
-    np.save(cache_path, image_idx_matrix)
-    return image_idx_matrix
+_TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
 
 def _merge_layers(*layers: _IndexMatrix) -> _IndexMatrix:
@@ -114,11 +75,11 @@ class TargetImage:
         :param path_to_cache: path to the cache file or None. If given, will cache
             the root element only. Will refresh the cache with each append.
         """
-        self.clusters = get_image_supercluster(Supercluster, path)
+        self.clusters, self.image = new_supercluster_with_quantized_image(
+            Supercluster, path
+        )
         self._bite_size = 9 if bite_size is None else bite_size
-        colormap = self.clusters.members.vectors
 
-        self.image = apply_colormap(path, colormap, ignore_cache=ignore_cache)
         self._state: _IndexMatrix = np.zeros(self.image.shape[:2], dtype=int)
         self.layers = np.empty((0,) + self.image.shape[:2], dtype=int)
 
@@ -136,25 +97,27 @@ class TargetImage:
         self._state = state
         self.__state_cost_matrix = None
 
-    def get_cost_matrix_with_layer(self, layer: _IndexMatrix) -> _ErrorArray:
+    def get_cost_matrix(self, *layers: _IndexMatrix) -> _ErrorArray:
         """Get the cost-per-pixel between self.image and (state + layer).
 
-        :param layer: layer to apply to the current state
+        :param layers: layers to apply to the current state. There will only ever be
+            0 or 1 layers. If 0, the cost matrix of the current state will be
+            returned.  If 1, the cost matrix with a layer applied over it.
         :return: cost-per-pixel between image and (state + layer)
 
         This should decrease after every append.
         """
-        with_layer_applied = self.get_state_with_layer_applied(layer)
-        pmatrix = self.clusters.members.pmatrix
-        return pmatrix[self.image, with_layer_applied]
+        state_with_layers_applied = _merge_layers(self.state, *layers)
+        return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
-    def get_cost_with_layer(self, layer: _IndexMatrix) -> float:
+    def get_cost(self, *layers: _IndexMatrix) -> float:
         """Get the cost between self.image and state with layer applied.
 
-        :param layer: layer to apply to the current state
+        :param layer: layers to apply to the current state. There will only ever be 1
+            layer.
         :return: sum of the cost between image and (state + layer)
         """
-        return float(np.sum(self.get_cost_matrix_with_layer(layer)))
+        return float(np.sum(self.get_cost_matrix(*layers)))
 
     @property
     def state_cost_matrix(self) -> _ErrorArray:
@@ -163,8 +126,7 @@ class TargetImage:
         This should decrease after every append.
         """
         if self.__state_cost_matrix is None:
-            pmatrix = self.clusters.members.pmatrix
-            self.__state_cost_matrix = pmatrix[self.image, self.state]
+            self.__state_cost_matrix = self.get_cost_matrix()
         return self.__state_cost_matrix
 
     @property
@@ -183,7 +145,7 @@ class TargetImage:
         that position.
         """
         solid = np.full(self.image.shape, palette_index)
-        solid_cost_matrix = self.get_cost_matrix_with_layer(solid)
+        solid_cost_matrix = self.get_cost_matrix(solid)
         layer = np.full(self.image.shape, -1)
         layer[np.where(self.state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
@@ -191,7 +153,7 @@ class TargetImage:
     def new_background_candidate_layer(self, palette_index: int) -> _IndexMatrix:
         """Create a new candidate for a background color.
 
-        This is only a method to simplify accessing self.state.shape. The candidate
+        This is only a method to simplify accessing self.image.shape. The candidate
         will be a solid color despite what costs this may or may not improve.
         """
         return np.full(self.image.shape, palette_index)
@@ -342,7 +304,7 @@ def posterize(image_path: Path, bite_size: float | None = None) -> _IndexMatrix:
     # set a background color
     colors = target.get_colors()
     candidates = [target.new_background_candidate_layer(x) for x in colors]
-    scored = [(target.get_cost_with_layer(x), x) for x in candidates]
+    scored = [(target.get_cost(x), x) for x in candidates]
     best = min(scored, key=itemgetter(0))[1]
     target.append_layer(best)
 
@@ -351,7 +313,7 @@ def posterize(image_path: Path, bite_size: float | None = None) -> _IndexMatrix:
     while len(target.clusters.ixs) > 0:
         colors = target.get_colors()
         candidates = [target.new_candidate_layer(x) for x in colors]
-        scored = [(target.get_cost_with_layer(x), x) for x in candidates]
+        scored = [(target.get_cost(x), x) for x in candidates]
         best = min(scored, key=itemgetter(0))[1]
         target.append_layer(best)
         count += 1
