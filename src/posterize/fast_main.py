@@ -80,7 +80,7 @@ class TargetImage:
         )
         self._bite_size = 9 if bite_size is None else bite_size
 
-        self._state: _IndexMatrix = np.zeros(self.image.shape[:2], dtype=int)
+        self._state: _IndexMatrix | None = None
         self.layers = np.empty((0,) + self.image.shape[:2], dtype=int)
 
         # cache for each state
@@ -89,6 +89,9 @@ class TargetImage:
     @property
     def state(self) -> _IndexMatrix:
         """Read cached state."""
+        if self._state is None:
+            msg = "State is undefined. No layers have been appended."
+            raise ValueError(msg)
         return self._state
 
     @state.setter
@@ -107,7 +110,15 @@ class TargetImage:
 
         This should decrease after every append.
         """
-        state_with_layers_applied = _merge_layers(self.state, *layers)
+        if self._state is not None:
+            layers = (self._state,) + layers
+        if not layers:
+            msg = "No state and no layers to apply."
+            raise ValueError(msg)
+        state_with_layers_applied = _merge_layers(*layers)
+        if -1 in state_with_layers_applied:
+            msg = "There are still transparent pixels in the state."
+            raise ValueError(msg)
         return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
     def get_cost(self, *layers: _IndexMatrix) -> float:
@@ -143,23 +154,21 @@ class TargetImage:
         A candidate is the current state with state indices replaced with
         palette_index where palette_index has a lower cost that the index in state at
         that position.
+
+        If there are no layers, the candidate will be a solid color.
         """
         solid = np.full(self.image.shape, palette_index)
+        if self._state is None:
+            return solid
         solid_cost_matrix = self.get_cost_matrix(solid)
         layer = np.full(self.image.shape, -1)
         layer[np.where(self.state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
-    def new_background_candidate_layer(self, palette_index: int) -> _IndexMatrix:
-        """Create a new candidate for a background color.
-
-        This is only a method to simplify accessing self.image.shape. The candidate
-        will be a solid color despite what costs this may or may not improve.
-        """
-        return np.full(self.image.shape, palette_index)
-
     def get_state_with_layer_applied(self, layer: _IndexMatrix) -> _IndexMatrix:
         """Apply a layer to the current state."""
+        if self._state is None:
+            return layer
         return _merge_layers(self.state, layer)
 
     def _split_to_exclude_vibrant(self, palette_index: int):
@@ -204,6 +213,18 @@ class TargetImage:
 
     @functools.cached_property
     def vibrant_colors(self) -> set[int]:
+        """Get the vibrant colors in the image.
+
+        :return: a set of palette indices that are considered vibrant
+
+        These colors cannot be removed from `self._clusters.ixs` unless they are
+        within `bite_size` of the cluster centroid. This prevents vibrant outliers
+        from disappearing into less-vibrant clusters.
+
+        Will take the 10% most vibrant colors in the image, but will exclude colors
+        with vibrance < 64. This is to prevent muddy colors from being considered
+        vibrant just because an image is mostly grayscale.
+        """
         vectors = self.clusters.members.vectors
         v_max = cast(npt.NDArray[np.float64], np.max(vectors, axis=1))
         v_min = cast(npt.NDArray[np.float64], np.min(vectors, axis=1))
@@ -303,7 +324,7 @@ def posterize(image_path: Path, bite_size: float | None = None) -> _IndexMatrix:
 
     # set a background color
     colors = target.get_colors()
-    candidates = [target.new_background_candidate_layer(x) for x in colors]
+    candidates = [target.new_candidate_layer(x) for x in colors]
     scored = [(target.get_cost(x), x) for x in candidates]
     best = min(scored, key=itemgetter(0))[1]
     target.append_layer(best)
