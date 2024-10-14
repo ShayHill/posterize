@@ -7,17 +7,25 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "basic-colormath>=0.4",
-    "cluster-colors>=0.13",
-    "numpy",
-    "paragraphs",
-    "stacked-quantile",
-    "svg-ultralight",
-    "cairosvg"
+  "basic-colormath>=0.4",
+  "cairosvg",
+  "cluster-colors>=0.13",
+  "numpy",
+  "paragraphs",
+  "scipy",
+  "stacked-quantile",
+  "svg-ultralight",
 ]
 
 [project.optional-dependencies]
-dev = ["conventional-with-data", "pre-commit", "pytest", "tox", "types-lxml", "types-pillow"]
+dev = [
+  "conventional-with-data",
+  "pre-commit",
+  "pytest",
+  "tox",
+  "types-lxml",
+  "types-pillow"
+]
 
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
