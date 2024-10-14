@@ -5,10 +5,14 @@ from operator import itemgetter
 from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Annotated, TypeAlias, TypeVar, cast
+from posterize.image_processing import get_layer_color_index
+import itertools as it
+from operator import attrgetter
+
 
 import numpy as np
 from basic_colormath import floats_to_uint8
-from cluster_colors.cluster_supercluster import SuperclusterBase
+from cluster_colors.cluster_supercluster import SuperclusterBase, AgglomerativeSupercluster
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
@@ -16,15 +20,18 @@ from PIL import Image
 from PIL.Image import Image as ImageType
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
+from posterize.image_processing import draw_posterized_image
 
 from posterize import paths
 from posterize.quantization import new_supercluster_with_quantized_image
+from typing import Sequence, TypeVar, Union
 
 logging.basicConfig(level=logging.INFO)
 
-_PixelMatrix: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r,c,3)"]
-_PixelVector: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r,3)"]
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int64], "(r,c)"]
+_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int64], "(n,r,c)"]
+_IndexVector: TypeAlias = Annotated[npt.NDArray[np.int64], "(n,)"]
+_IndexVectorLike: TypeAlias = _IndexVector | Sequence[int]
 _LabArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,3)"]
 _MonoPixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,1)"]
 _ErrorArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,1)"]
@@ -251,76 +258,17 @@ class TargetImage:
         return [x.centroid for x in self.clusters.clusters]
 
 
-def _write_svg(mono: Path) -> Path:
-    """Create an svg for a given illumination.
-
-    :param lux: illumination level
-    :return: path to the output svg
-    """
-    # svg_path = self._file_paths.get_tmp_svg(lux)
-    svg_path = (paths.CACHE / mono.name).with_suffix(".svg")
-    command = [
-        str(paths.POTRACE),
-        str(mono),
-        "-o",
-        str(svg_path),
-        "-k",
-        str(0.5),
-        "-u",
-        "1",  # do not scale svg (points correspond to pixels array)
-        "--flat",  # all paths combined in one element
-        # "-t", str(self._tsize),  # remove speckles
-        "-b",
-        "svg",  # output format
-        "--opttolerance",
-        "2.8",  # higher values make paths smoother
-    ]
-    # fmt: on
-    _ = subprocess.run(command, check=True)
-    return svg_path
-
-
-def draw_posterized_image(
-    filename: str, layers: _IndexMatrix, colormap: _PixelVector
-) -> ImageType:
-    """Draw a posterized image.
-
-    :param filename: path to the image
-    :param layers: layers to draw
-    :return: posterized image
-    """
-
-    bg_col = colormap[layers[0][0][0]]
-    height, width = layers[0].shape
-    bg_geo = new_element(
-        "rect", x=0, y=0, width=width, height=height, fill=svg_color_tuple(bg_col)
-    )
-    root = new_svg_root(x_=0, y_=0, width_=width, height_=height)
-    root.append(bg_geo)
-    for i, layer in enumerate(layers[1:], 1):
-        bmp_path = paths.CACHE / f"{filename}_{i}.bmp"
-        cols = np.unique(layer)
-        assert len(cols) == 2
-        elem_color = max(cols)
-        mono_pixels = np.ones([*layer.shape, 3], dtype=np.uint8) * 255
-        mono_pixels[np.where(layer != -1)] = (0, 0, 0)
-        mono_bmp = Image.fromarray(mono_pixels)
-        mono_bmp.save(bmp_path)
-        mono_svg = _write_svg(bmp_path)
-        elem = etree.parse(str(mono_svg)).getroot()[1]
-        _ = update_element(elem, fill=svg_color_tuple(colormap[elem_color]))
-        root.append(elem)
-    svg_path = paths.WORKING / f"{filename}.svg"
-    _ = write_svg(svg_path, root)
-
-
-def posterize(image_path: Path, bite_size: float | None = None) -> _IndexMatrix:
+def posterize(image_path: Path, bite_size: float | None = None, ixs: _IndexVectorLike | None = None) -> TargetImage:
     """Posterize an image.
 
     :param image_path: path to the image
+    :param bite_size: the max average error of the cluster removed for each color
+    :param ixs: optionally pass a subset of the palette indices to use
     :return: posterized image
     """
     target = TargetImage(image_path, bite_size)
+    if ixs is not None:
+        target.clusters = target.clusters.copy(inc_members=ixs)
 
     # set a background color
     colors = target.get_colors()
@@ -342,14 +290,114 @@ def posterize(image_path: Path, bite_size: float | None = None) -> _IndexMatrix:
 
     image_path = Path("temp.svg")
     clusters = target.clusters
-    aaa = clusters.members.vectors
 
-    _ = draw_posterized_image(
-        "temp_test", target.layers, floats_to_uint8(clusters.members.vectors)
+    draw_posterized_image(
+         clusters.members.vectors, target.layers, "temp_test"
+    )
+    return target
+
+class SuperclusterMax(SuperclusterBase):
+    """A SuperclusterBase that uses divisive clustering."""
+
+    quality_metric = "max_error"
+    quality_centroid = "weighted_medoid"
+    assignment_centroid = "weighted_medoid"
+    clustering_method = "divisive"
+
+def contrast(colormap: _FPArray, ixs: _IndexVector) -> float:
+    """Get the contrast between the colors in colormap at indices ixs.
+
+    :param colormap: (r, 3) array of colors
+    :param ixs: indices of colors in colormap
+    :return: contrast between colors at ixs
+
+    The contrast is the sum of the euclidean distances between all pairs of colors.
+    """
+    return float(np.sum(colormap[np.ix_(ixs, ixs)]))
+
+def count_continuity(array):
+    m, n = array.shape
+    continuity_count = 0
+    
+    # Check horizontal continuity
+    for i in range(m):
+        continuity_count += count_sequences(array[i, :])
+
+    # Check vertical continuity
+    for j in range(n):
+        continuity_count += count_sequences(array[:, j])
+
+    # Check diagonal continuity (top-left to bottom-right)
+    for k in range(-m + 1, n):
+        diagonal = np.diagonal(array, offset=k)
+        continuity_count += count_sequences(diagonal)
+
+    # Check anti-diagonal continuity (top-right to bottom-left)
+    for k in range(-m + 1, n):
+        diagonal = np.diagonal(np.fliplr(array), offset=k)
+        continuity_count += count_sequences(diagonal)
+    
+    return continuity_count
+
+def count_sequences(arr):
+    """Count the total length of consecutive 1s in a 1D array."""
+    count = 0
+    length = 0
+    for value in arr:
+        if value == 1:
+            length += 1
+        else:
+            if length > 1:  # Only interested in sequences longer than 1
+                count += length
+            length = 0
+    # If array ends with a sequence of 1s
+    if length > 1:
+        count += length
+    return count
+
+
+def posterize_to_n_colors(image_path: Path, num_cols: int, bite_size: float | None = None, ixs: _IndexVectorLike | None = None) -> _IndexMatrices:
+    target = posterize(image_path, bite_size, ixs)
+    # breakpoint()
+    colors = [get_layer_color_index(x) for x in target.layers]
+    continuity = [count_continuity(x) for x in target.layers]
+    breakpoint()
+    clusters, _ = new_supercluster_with_quantized_image(
+        AgglomerativeSupercluster, image_path
     )
 
-    return target.state
+    clusters.ixs = np.array(colors)
+    clusters.set_n(num_cols)
+    pals = it.product(*map(attrgetter("ixs"), clusters.clusters))
+    breakpoint()
+    pick = max(pals, key=lambda x: contrast(clusters.members.pmatrix, x))
 
+    # breakpoint()
+
+    # vibrant = set(target.vibrant_colors)
+    # pick: set[int] = set()
+    # while len(pick) < num_cols:
+    #     clu = clusters.clusters
+    #     new_picks = {x.centroid for x in clu if x.centroid in vibrant}
+    #     if new_picks:
+    #         clusters = clusters.copy(exc_member_clusters=new_picks)
+    #         pick.update(new_picks)
+    #         continue
+    #     new_picks = {x.centroid for x in clu if not vibrant & set(x.ixs)}
+    #     if new_picks:
+    #         clusters = clusters.copy(exc_member_clusters=new_picks)
+    #         pick.update(new_picks)
+    #         continue
+    #     clusters.split()
+    layers =  posterize(image_path, 0, list(pick))
+
+
+
+
+    
 
 if __name__ == "__main__":
-    posterize(paths.PROJECT / "tests/resources/adidas.jpg", bite_size=25.2)
+    image_path = paths.PROJECT / "tests/resources/cafe_at_arles.jpg"
+    # _ = posterize(image_path, bite_size=9)
+    _ = posterize_to_n_colors(image_path, bite_size=9, num_cols=6)
+    print("done")
