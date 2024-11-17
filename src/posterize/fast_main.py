@@ -1,46 +1,26 @@
 import functools
 import logging
-import subprocess
 from operator import itemgetter
 from pathlib import Path
-from tempfile import TemporaryFile
-from typing import Annotated, TypeAlias, TypeVar, cast
-from posterize.image_processing import get_layer_color_index
-import itertools as it
-from operator import attrgetter
-from basic_colormath import get_delta_e
-
-
-from typing import Iterable
+from typing import Annotated, Iterable, Sequence, TypeAlias, TypeVar, cast, Iterator
+import pickle
 import numpy as np
-from basic_colormath import floats_to_uint8
-from cluster_colors import (
-    SuperclusterBase,
-    AgglomerativeSupercluster,
-    Members,
-)
-from lxml import etree
+from basic_colormath import get_delta_e
+from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
-from PIL import Image
-from PIL.Image import Image as ImageType
-from svg_ultralight import new_element, new_svg_root, update_element, write_svg
-from svg_ultralight.strings import svg_color_tuple
-from posterize.image_processing import draw_posterized_image
-from posterize.convolution import (
-    quantify_layer_continuity,
-    quantify_mask_continuity,
-    shrink_mask,
-)
 
 from posterize import paths
+from posterize.convolution import shrink_mask
+from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
-from typing import Sequence, TypeVar, Union
 
 logging.basicConfig(level=logging.INFO)
 
+# an image-sized array of -1 where transparent and palette indices where opaque
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int64], "(r,c)"]
 _IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int64], "(n,r,c)"]
+
 _IndexVector: TypeAlias = Annotated[npt.NDArray[np.int64], "(n,)"]
 _IndexVectorLike: TypeAlias = _IndexVector | Sequence[int]
 _LabArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,3)"]
@@ -48,9 +28,6 @@ _MonoPixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,1)"]
 _ErrorArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,1)"]
 _RGBTuple = tuple[int, int, int]
 _FPArray = npt.NDArray[np.float64]
-
-with TemporaryFile() as f:
-    CACHE_DIR = Path(f.name).parent / "cluster_colors_cache"
 
 
 class Supercluster(SuperclusterBase):
@@ -62,23 +39,15 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-class Supercluster2(SuperclusterBase):
-    """A SuperclusterBase that uses divisive clustering."""
-
-    quality_metric = "sum_error"
-    quality_centroid = "weighted_medoid"
-    assignment_centroid = "weighted_medoid"
-    clustering_method = "divisive"
-
-
-_TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
+# _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
 
 def _merge_layers(*layers: _IndexMatrix) -> _IndexMatrix:
     """Merge layers into a single layer.
 
-    :param layers: (m, n) arrays with an integer in opaque pixels and -1 in transparent
-    :return: one (m, n) array with the last non-transparent pixel in each position
+    :param layers: (r, c) arrays with non-negative integers (palette indices) in
+        opaque pixels and -1 in transparent
+    :return: one (r, c) array with the last non-transparent pixel in each position
     """
     merged = layers[0].copy()
     for layer in layers[1:]:
@@ -99,36 +68,40 @@ class TargetImage:
         """Initialize a TargetImage.
 
         :param path: path to the image
-        :param path_to_cache: path to the cache file or None. If given, will cache
-            the root element only. Will refresh the cache with each append.
+        :param bite_size: the max error of the cluster removed for each color. If the
+            cluster is vibrant, max error will be limited to bite_size. If the
+            cluster is not vibrant, average error will be limited to bite_size.
         """
+        self._path = path
+        self._bite_size = 9 if bite_size is None else bite_size
+
+
         self.clusters, self.image = new_supercluster_with_quantized_image(
             Supercluster, path
         )
-        self._bite_size = 9 if bite_size is None else bite_size
 
-        self._state: _IndexMatrix | None = None
-        self.layers = np.empty((0,) + self.image.shape[:2], dtype=int)
-
-        # cache for each state
-        self.__state_cost_matrix: _FPArray | None = None
+        # initialize cached properties
+        self._layers = np.empty((0,) + self.image.shape[:2], dtype=int)
+        self.state = np.ones_like(self.image) * -1
+        self.state_cost_matrix = np.ones_like(self.image) * np.inf
 
     @property
-    def state(self) -> _IndexMatrix:
-        """Read cached state."""
-        if self._state is None:
-            msg = "State is undefined. No layers have been appended."
-            raise ValueError(msg)
-        return self._state
+    def layers(self) -> _IndexMatrices:
+        return self._layers
 
-    @state.setter
-    def state(self, state: _IndexMatrix):
-        """Set a new state and reset all cached properties."""
-        self._state = state
-        self.__state_cost_matrix = None
+    @layers.setter
+    def layers(self, value: _IndexMatrices) -> None:
+        self._layers = value
+        self.state = _merge_layers(*value)
+        self.state_cost_matrix = self._get_cost_matrix(self.state)
 
-    def get_cost_matrix(self, *layers: _IndexMatrix) -> _ErrorArray:
-        """Get the cost-per-pixel between self.image and (state + layer).
+    @functools.cached_property
+    def cache_stem(self) -> str:
+        cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
+        return f"{self._path.stem}-{cache_bite_size}"
+
+    def _get_cost_matrix(self, *layers: _IndexMatrix) -> _ErrorArray:
+        """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
             0 or 1 layers. If 0, the cost matrix of the current state will be
@@ -137,35 +110,22 @@ class TargetImage:
 
         This should decrease after every append.
         """
-        if self._state is not None:
-            layers = (self._state,) + layers
-        if not layers:
-            msg = "No state and no layers to apply."
-            raise ValueError(msg)
-        state_with_layers_applied = _merge_layers(*layers)
+        state_with_layers_applied = _merge_layers(self.state, *layers)
         if -1 in state_with_layers_applied:
             msg = "There are still transparent pixels in the state."
             raise ValueError(msg)
         return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
     def get_cost(self, *layers: _IndexMatrix) -> float:
-        """Get the cost between self.image and state with layer applied.
+        """Get the cost between self.image and state with layers applied.
 
-        :param layer: layers to apply to the current state. There will only ever be 1
-            layer.
+        :param layers: layers to apply to the current state. There will only ever be
+            one layer.
         :return: sum of the cost between image and (state + layer)
         """
-        return float(np.sum(self.get_cost_matrix(*layers)))
-
-    @property
-    def state_cost_matrix(self) -> _ErrorArray:
-        """Get the current cost-per-pixel between state and input.
-
-        This should decrease after every append.
-        """
-        if self.__state_cost_matrix is None:
-            self.__state_cost_matrix = self.get_cost_matrix()
-        return self.__state_cost_matrix
+        if layers:
+            return float(np.sum(self._get_cost_matrix(*layers)))
+        return self.state_cost
 
     @property
     def state_cost(self) -> float:
@@ -185,18 +145,12 @@ class TargetImage:
         If there are no layers, the candidate will be a solid color.
         """
         solid = np.full(self.image.shape, palette_index)
-        if self._state is None:
+        if self.layers.shape[0] == 0:
             return solid
-        solid_cost_matrix = self.get_cost_matrix(solid)
+        solid_cost_matrix = self._get_cost_matrix(solid)
         layer = np.full(self.image.shape, -1)
         layer[np.where(self.state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
-
-    def get_state_with_layer_applied(self, layer: _IndexMatrix) -> _IndexMatrix:
-        """Apply a layer to the current state."""
-        if self._state is None:
-            return layer
-        return _merge_layers(self.state, layer)
 
     def _split_to_exclude_vibrant(self, palette_index: int):
         """Exclude vibrant colors from a cluster.
@@ -231,8 +185,6 @@ class TargetImage:
         layer_color = max(np.unique(layer))
         assert layer_color != -1
 
-        self.state = self.get_state_with_layer_applied(layer)
-
         self.clusters.set_max_avg_error(self._bite_size)
         self._split_to_exclude_vibrant(layer_color)
         self.clusters = self.clusters.copy(exc_member_clusters=[layer_color])
@@ -264,18 +216,20 @@ class TargetImage:
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
 
-        :param num: number of colors to get
-        :return: the num+1 most common colors in the image
-
-        Return one color that represents the entire self.custers plus the exemplar of
-        cluster after splitting to at most num clusters.
+        :return: the rough color clusters in the image
         """
-        self.clusters.set_max_avg_error(16)
-        # max_w = max(self._clusters.clusters, key=lambda x: x.weight)
+        self.clusters.set_max_avg_error(self._bite_size)
         print(f"generated {len(self.clusters.clusters)} colors")
-        # return [max_w.centroid]
-
         return [x.centroid for x in self.clusters.clusters]
+
+    def get_best_candidate(self) -> _IndexMatrix:
+        """Get the best candidate layer.
+
+        :return: the candidate layer with the lowest cost
+        """
+        candidates = map(self.new_candidate_layer, self.get_colors())
+        scored = ((self.get_cost(x), x) for x in candidates)
+        return min(scored, key=itemgetter(0))[1]
 
 
 def pick_nearest_color(
@@ -291,13 +245,48 @@ def pick_nearest_color(
     return min(colors, key=lambda x: get_delta_e(rgb, colormap[x]))
 
 
-# todo: remove stem argument
+def _draw_target(target: TargetImage, num_cols: int | None = None):
+    """Infer a name from TargetImage args and write image to file.
+
+    This is for debugging how well image is visually represented and what colors
+    might be "eating" others in the image.
+    """
+    # vectors = target.clusters.members.vectors
+    # stem_parts = (target.cache_stem, len(target.clusters.ixs), num_cols)
+    # output_stem = "-".join(_stemize(*stem_parts))
+    # draw_posterized_image(vectors, target.layers[:num_cols], output_stem)
+
+def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
+    """Convert args to strings and filter out empty strings."""
+    if not args:
+        return
+    if args[0] is None:
+        yield from _stemize(*args[1:])
+    elif isinstance(args[0], str):
+        yield args[0]
+        yield from _stemize(*args[1:])
+    elif isinstance(args[0], Path):
+        yield args[0].stem
+        yield from _stemize(*args[1:])
+    elif isinstance(args[0], float):
+        yield f"{args[0]:05.2f}".replace(".", "_")
+        yield from _stemize(*args[1:])
+    else:
+        assert isinstance(args[0], int)
+        yield f"{args[0]:03d}"
+        yield from _stemize(*args[1:])
+
+def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path:
+    stem = '-'.join(_stemize(*args))
+    return (paths.CACHE_DIR / stem).with_suffix(suffix)
+
 def posterize(
     image_path: Path,
     bite_size: float | None = None,
     ixs: _IndexVectorLike | None = None,
-    suffix: str = "",
     num_cols: int | None = None,
+    *,
+    ignore_cache: bool = True,
 ) -> TargetImage:
     """Posterize an image.
 
@@ -306,79 +295,47 @@ def posterize(
     :param ixs: optionally pass a subset of the palette indices to use
     :return: posterized image
     """
-    target = TargetImage(image_path, bite_size)
-    if ixs is not None:
+    target = TargetImage(image_path, bite_size, ignore_cache=ignore_cache)
+
+    cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
+    if cache_path.exists() and not ignore_cache:
+        target.layers = np.load(cache_path)
+        return target
+
+    if ixs:
         target.clusters = target.clusters.copy(inc_members=ixs)
-
-    # set a background color
-    colors = target.get_colors()
-    candidates = [target.new_candidate_layer(x) for x in colors]
-    scored = [(target.get_cost(x), x) for x in candidates]
-    best = min(scored, key=itemgetter(0))[1]
-    target.append_layer(best)
-
-    # add layers
-    count = 1
     while len(target.clusters.ixs) > 0:
-        colors = target.get_colors()
-        candidates = [target.new_candidate_layer(x) for x in colors]
-        scored = [(target.get_cost(x), x) for x in candidates]
-        best = min(scored, key=itemgetter(0))[1]
-        target.append_layer(best)
-        count += 1
-    print(f"appended {count} layers")
+        target.append_layer(target.get_best_candidate())
+    print(f"appended {len(target.layers)} layers")
 
-    clusters = target.clusters
+    _draw_target(target, num_cols)
 
-    output_stem = f"{image_path.stem}_{len(target.layers):03d}"
-    if suffix:
-        output_stem += f"_{suffix}"
+    np.save(cache_path, target.layers)
 
-    draw_posterized_image(clusters.members.vectors, target.layers, output_stem)
-    if num_cols is not None:
-        draw_posterized_image(
-            clusters.members.vectors, target.layers[:num_cols], suffix + "_mid"
-        )
     return target
 
 
-class SuperclusterMax(SuperclusterBase):
-    """A SuperclusterBase that uses divisive clustering."""
-
-    quality_metric = "max_error"
-    quality_centroid = "weighted_medoid"
-    assignment_centroid = "weighted_medoid"
-    clustering_method = "divisive"
 
 
-def contrast(colormap: _FPArray, ixs: _IndexVector) -> float:
-    """Get the contrast between the colors in colormap at indices ixs.
-
-    :param colormap: (r, 3) array of colors
-    :param ixs: indices of colors in colormap
-    :return: contrast between colors at ixs
-
-    The contrast is the sum of the euclidean distances between all pairs of colors.
-    """
-    return float(np.sum(colormap[np.ix_(ixs, ixs)]))
-
-
-def _compress_to_n_colors(target: TargetImage, net_cols: int, gross_cols: int | None = None):
+def _compress_to_n_colors(
+    target: TargetImage, net_cols: int, gross_cols: int | None = None
+):
     state_at_n = _merge_layers(*target.layers[:gross_cols])
 
-import itertools as it
 
 def posterize_to_n_colors(
     image_path: Path,
-    num_cols: int,
-    bite_size: float | None = None,
     ixs: _IndexVectorLike | None = None,
+    bite_size: float | None = None,
+    num_cols: int,
     skip_cols: list[tuple[float, float, float]] = [],
     skip_fields: list[tuple[float, float, float]] = [],
 ) -> _IndexMatrices:
 
+    ixs_ = () if ixs is None else tuple(ixs)
+
     # draw the image with all colors as a visual aid
-    target = posterize(image_path, bite_size, ixs, num_cols=num_cols)
+    target = posterize(image_path, bite_size, (), num_cols, ignore_cache=False)
     state_copy = target.state.copy()
 
     # dump skipped fields
@@ -426,11 +383,17 @@ def posterize_to_n_colors(
         # pick.append(supercluster.clusters[0].centroid)
 
     # pick = [max(x.ixs, key=lambda x: supercluster.members.weights[x]) for x in supercluster.clusters]
-    layers = posterize(image_path, 0, list(pick))
+    layers = posterize(image_path, 0, tuple(pick))
 
 
 if __name__ == "__main__":
     image_path = paths.PROJECT / "tests/resources/manet.jpg"
     # _ = posterize(image_path, bite_size=9)
-    _ = posterize_to_n_colors(image_path, bite_size=9, num_cols=6, skip_cols=[(123, 116, 106), (126, 103, 101)])
+    _ = posterize_to_n_colors(
+        image_path,
+        bite_size=9,
+        ixs = (),
+        num_cols=6,
+        # skip_cols=[(123, 116, 106), (126, 103, 101)],
+    )
     print("done")
