@@ -129,6 +129,7 @@ def new_supercluster_with_quantized_image(
     supercluster = get_image_supercluster(
         supercluster_type, path, ignore_cache=ignore_cache
     )
+    print(f"calculating quantized image for {path}")
     pixel_indices = _map_pixels_to_members_vectors(
         supercluster, path, ignore_cache=ignore_cache
     )

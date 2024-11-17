@@ -8,11 +8,17 @@ from typing import Annotated, TypeAlias, TypeVar, cast
 from posterize.image_processing import get_layer_color_index
 import itertools as it
 from operator import attrgetter
+from basic_colormath import get_delta_e
 
 
+from typing import Iterable
 import numpy as np
 from basic_colormath import floats_to_uint8
-from cluster_colors.cluster_supercluster import SuperclusterBase, AgglomerativeSupercluster
+from cluster_colors import (
+    SuperclusterBase,
+    AgglomerativeSupercluster,
+    Members,
+)
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
@@ -21,6 +27,11 @@ from PIL.Image import Image as ImageType
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 from posterize.image_processing import draw_posterized_image
+from posterize.convolution import (
+    quantify_layer_continuity,
+    quantify_mask_continuity,
+    shrink_mask,
+)
 
 from posterize import paths
 from posterize.quantization import new_supercluster_with_quantized_image
@@ -46,6 +57,15 @@ class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
     quality_metric = "avg_error"
+    quality_centroid = "weighted_medoid"
+    assignment_centroid = "weighted_medoid"
+    clustering_method = "divisive"
+
+
+class Supercluster2(SuperclusterBase):
+    """A SuperclusterBase that uses divisive clustering."""
+
+    quality_metric = "sum_error"
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
@@ -258,7 +278,27 @@ class TargetImage:
         return [x.centroid for x in self.clusters.clusters]
 
 
-def posterize(image_path: Path, bite_size: float | None = None, ixs: _IndexVectorLike | None = None) -> TargetImage:
+def pick_nearest_color(
+    rgb: _RGBTuple, colormap: _FPArray, colors: Iterable[int]
+) -> int:
+    """Pick the nearest color in colormap to rgb.
+
+    :param rgb: (r, g, b) tuple
+    :param colormap: (r, 3) array of colors
+    :param colors: indices of colors in colormap to consider
+    :return: index of the nearest color in colormap to rgb
+    """
+    return min(colors, key=lambda x: get_delta_e(rgb, colormap[x]))
+
+
+# todo: remove stem argument
+def posterize(
+    image_path: Path,
+    bite_size: float | None = None,
+    ixs: _IndexVectorLike | None = None,
+    suffix: str = "",
+    num_cols: int | None = None,
+) -> TargetImage:
     """Posterize an image.
 
     :param image_path: path to the image
@@ -288,13 +328,19 @@ def posterize(image_path: Path, bite_size: float | None = None, ixs: _IndexVecto
         count += 1
     print(f"appended {count} layers")
 
-    image_path = Path("temp.svg")
     clusters = target.clusters
 
-    draw_posterized_image(
-         clusters.members.vectors, target.layers, "temp_test"
-    )
+    output_stem = f"{image_path.stem}_{len(target.layers):03d}"
+    if suffix:
+        output_stem += f"_{suffix}"
+
+    draw_posterized_image(clusters.members.vectors, target.layers, output_stem)
+    if num_cols is not None:
+        draw_posterized_image(
+            clusters.members.vectors, target.layers[:num_cols], suffix + "_mid"
+        )
     return target
+
 
 class SuperclusterMax(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
@@ -303,6 +349,7 @@ class SuperclusterMax(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
 
 def contrast(colormap: _FPArray, ixs: _IndexVector) -> float:
     """Get the contrast between the colors in colormap at indices ixs.
@@ -315,89 +362,75 @@ def contrast(colormap: _FPArray, ixs: _IndexVector) -> float:
     """
     return float(np.sum(colormap[np.ix_(ixs, ixs)]))
 
-def count_continuity(array):
-    m, n = array.shape
-    continuity_count = 0
-    
-    # Check horizontal continuity
-    for i in range(m):
-        continuity_count += count_sequences(array[i, :])
 
-    # Check vertical continuity
-    for j in range(n):
-        continuity_count += count_sequences(array[:, j])
+def _compress_to_n_colors(target: TargetImage, net_cols: int, gross_cols: int | None = None):
+    state_at_n = _merge_layers(*target.layers[:gross_cols])
 
-    # Check diagonal continuity (top-left to bottom-right)
-    for k in range(-m + 1, n):
-        diagonal = np.diagonal(array, offset=k)
-        continuity_count += count_sequences(diagonal)
+import itertools as it
 
-    # Check anti-diagonal continuity (top-right to bottom-left)
-    for k in range(-m + 1, n):
-        diagonal = np.diagonal(np.fliplr(array), offset=k)
-        continuity_count += count_sequences(diagonal)
-    
-    return continuity_count
+def posterize_to_n_colors(
+    image_path: Path,
+    num_cols: int,
+    bite_size: float | None = None,
+    ixs: _IndexVectorLike | None = None,
+    skip_cols: list[tuple[float, float, float]] = [],
+    skip_fields: list[tuple[float, float, float]] = [],
+) -> _IndexMatrices:
 
-def count_sequences(arr):
-    """Count the total length of consecutive 1s in a 1D array."""
-    count = 0
-    length = 0
-    for value in arr:
-        if value == 1:
-            length += 1
-        else:
-            if length > 1:  # Only interested in sequences longer than 1
-                count += length
-            length = 0
-    # If array ends with a sequence of 1s
-    if length > 1:
-        count += length
-    return count
+    # draw the image with all colors as a visual aid
+    target = posterize(image_path, bite_size, ixs, num_cols=num_cols)
+    state_copy = target.state.copy()
 
+    # dump skipped fields
+    f_skip = {
+        pick_nearest_color(x, target.clusters.members.vectors, np.unique(target.state))
+        for x in skip_fields
+    }
 
-def posterize_to_n_colors(image_path: Path, num_cols: int, bite_size: float | None = None, ixs: _IndexVectorLike | None = None) -> _IndexMatrices:
-    target = posterize(image_path, bite_size, ixs)
-    # breakpoint()
-    colors = [get_layer_color_index(x) for x in target.layers]
-    continuity = [count_continuity(x) for x in target.layers]
-    breakpoint()
-    clusters, _ = new_supercluster_with_quantized_image(
-        AgglomerativeSupercluster, image_path
-    )
+    net_colors: list[int] = []
+    state_at_n = _merge_layers(*target.layers[:num_cols])
+    for gross_cols in range(num_cols + 1, 512):
+        net_colors = [x for x in np.unique(state_at_n) if x not in f_skip]
+        if len(net_colors) == num_cols:
+            break
+        state_at_n = _merge_layers(*target.layers[:gross_cols])
 
-    clusters.ixs = np.array(colors)
-    clusters.set_n(num_cols)
-    pals = it.product(*map(attrgetter("ixs"), clusters.clusters))
-    breakpoint()
-    pick = max(pals, key=lambda x: contrast(clusters.members.pmatrix, x))
+    masks = [np.where(state_at_n == x, 1, 0) for x in net_colors]
 
-    # breakpoint()
+    pick: list[int] = []
 
-    # vibrant = set(target.vibrant_colors)
-    # pick: set[int] = set()
-    # while len(pick) < num_cols:
-    #     clu = clusters.clusters
-    #     new_picks = {x.centroid for x in clu if x.centroid in vibrant}
-    #     if new_picks:
-    #         clusters = clusters.copy(exc_member_clusters=new_picks)
-    #         pick.update(new_picks)
-    #         continue
-    #     new_picks = {x.centroid for x in clu if not vibrant & set(x.ixs)}
-    #     if new_picks:
-    #         clusters = clusters.copy(exc_member_clusters=new_picks)
-    #         pick.update(new_picks)
-    #         continue
-    #     clusters.split()
-    layers =  posterize(image_path, 0, list(pick))
+    c_skip = {
+        pick_nearest_color(x, target.clusters.members.vectors, np.unique(target.state))
+        for x in skip_cols
+    }
 
+    for mask in (shrink_mask(m, 0) for m in masks):
+        masked = state_copy[np.where(mask == 1)]
+        pmatrix = target.clusters.members.pmatrix
+        image = target.image
 
+        def get_cost(ix):
+            r, g, b = target.clusters.members.vectors[ix]
+            min_c = min(r, g, b)
+            max_c = max(r, g, b)
+            return np.max(pmatrix[ix, image[np.where(mask)]])
+            return np.sum(pmatrix[ix, image[np.where(mask)]])
 
+        # if c_skip & set(np.unique(masked)):
+        #     breakpoint()
 
-    
+        cols = set(np.unique(masked)) - c_skip
+        cols = cols or (np.unique(masked))
+
+        pick.append(min(cols, key=get_cost))
+        # pick.append(supercluster.clusters[0].centroid)
+
+    # pick = [max(x.ixs, key=lambda x: supercluster.members.weights[x]) for x in supercluster.clusters]
+    layers = posterize(image_path, 0, list(pick))
+
 
 if __name__ == "__main__":
-    image_path = paths.PROJECT / "tests/resources/cafe_at_arles.jpg"
+    image_path = paths.PROJECT / "tests/resources/manet.jpg"
     # _ = posterize(image_path, bite_size=9)
-    _ = posterize_to_n_colors(image_path, bite_size=9, num_cols=6)
+    _ = posterize_to_n_colors(image_path, bite_size=9, num_cols=6, skip_cols=[(123, 116, 106), (126, 103, 101)])
     print("done")
