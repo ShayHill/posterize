@@ -305,7 +305,7 @@ def posterize(
     bite_size: float | None = None,
     ixs: _IndexVectorLike | None = None,
     num_cols: int | None = None,
-    mood: str = "",
+    mood: str | None = None,
     *,
     ignore_cache: bool = True,
 ) -> TargetImage:
@@ -329,7 +329,7 @@ def posterize(
         target.append_layer(target.get_best_candidate())
     print(f"appended {len(target.layers)} layers")
 
-    _draw_target(target, num_cols, mood)
+    _draw_target(target, num_cols, mood or "")
 
     np.save(cache_path, target.layers)
 
@@ -480,8 +480,7 @@ def _qtfy_colorful(rgb: RgbLike) -> float:
 
 def _get_palette_color_cost(
     members: Members,
-    pixels: npt.NDArray[np.int64],
-    palette: list[int],
+    palette: list[int | None],
     mood: Mood,
     idxs: Iterable[int],
 ):
@@ -521,6 +520,21 @@ def _get_palette_color_cost(
         msg = f"mood {mood} not implemented"
         raise NotImplementedError(msg)
 
+def _separate_colors(layers: list[npt.NDArray[np.int32]]) -> list[set[int]]:
+    """Group colors by layer in which they are most common.
+
+    :param layers: 
+
+    Nothing will blow up if some of the color sets end up empty. Downstream of this,
+    all colors are searched with no layer color is found.
+    """
+    all_cols: set[int] = set().union(*(np.unique(x) for x in layers))
+    cols_per_layer: list[set[int]] = [set() for _ in range(len(layers))]
+    for color in all_cols:
+        counts = [np.sum(layer == color) for layer in layers]
+        cols_per_layer[counts.index(max(counts))].add(color)
+    return cols_per_layer
+
 
 def _elect_palette(*palettes: list[int | None]) -> list[int | None]:
     """Assign a value to each palette index if it represents a majority.
@@ -547,111 +561,34 @@ def posterize_to_n_colors(
     num_cols: int,
     mood: Mood = Mood.FAITHFUL,
     seen: set[tuple[int, ...]] | None = None,
-    skip_cols: list[tuple[float, float, float]] = [],
-    skip_fields: list[tuple[float, float, float]] = [],
-) -> _IndexMatrices:
+    pick_: list[int | None] | None = None,
+) -> list[int]:
 
     seen = set() if seen is None else seen
-
     print(seen)
 
     ixs_ = () if ixs is None else tuple(ixs)
-
-    # draw the image with all colors as a visual aid
     target = posterize(image_path, bite_size, ixs_, num_cols, None, ignore_cache=False)
     state_copy = target.state.copy()
     vectors = target.clusters.members.vectors
 
-    # layers_at_n = target.layers[:num_cols + len(skip_fields)].copy()
-    # colors_at_n = list(np.unique(_merge_layers(*layers_at_n)))
-    # skip = {pick_nearest_color(x, vectors, colors_at_n) for x in skip_fields}
-    # skip_idxs = [colors_at_n.index(x) for x in skip]
-    # layers_at_n = np.delete(layers_at_n, skip_idxs, axis=0)
-
-    layers_at_n = target.layers[:0].copy()
-    for layer in target.layers:
-        layer_color = cast(int, np.unique(layer)[-1])
-        if get_delta_e((255, 255, 255), vectors[layer_color]) < 10:
-            continue
-        layers_at_n = np.append(layers_at_n, [layer], axis=0)
-        if layers_at_n.shape[0] == num_cols:
-            break
-
-    # # dump skipped fields
-    # f_skip = {
-    #     pick_nearest_color(x, vectors, np.unique(target.state))
-    #     for x in skip_fields
-    # }
-
-    # net_colors: list[int] = []
     state_at_n = _merge_layers(*target.layers[:num_cols])
-
     net_colors = [x for x in np.unique(state_at_n) if x != -1]
-
-    if len(net_colors) < num_cols:
-        return
-
-    # for gross_cols in range(num_cols + 1, 512):
-    #     net_colors = [x for x in np.unique(state_at_n) if x not in f_skip]
-    #     if len(net_colors) == num_cols:
-    #         break
-    #     state_at_n = _merge_layers(*target.layers[:gross_cols])
-
     masks = [np.where(state_at_n == x, 1, 0) for x in net_colors]
-
-    c_skip = {
-        pick_nearest_color(x, target.clusters.members.vectors, np.unique(target.state))
-        for x in skip_cols
-    }
 
     if mood == Mood.FAITHFUL:
         _ = posterize(image_path, 0, net_colors, mood=mood)
-        return
+        return net_colors
 
-    masks = [shrink_mask(m, 0) for m in masks]
-    maskeds = [state_copy[np.where(mask == 1)] for mask in masks]
-    colors_per_mask: list[set[int]] = [set(np.unique(m)) for m in maskeds]
-    dups: set[int] = set()
-    for x, y in it.combinations(colors_per_mask, 2):
-        dups.update(x & y)
+    masks = [shrink_mask(m, 1) for m in masks]
+    colors_per_mask = _separate_colors([state_copy[np.where(m == 1)] for m in masks])
 
-    for dup in sorted(dups):
-        # have_dup = [x for x in colors_per_mask  if dup in x]
-        # have_dup = sorted(have_dup, key=lambda x: len(x))
-        # for cols in have_dup:
-        #     if len(cols) == len(have_dup[0]):
-        #         continue
-        #     cols.remove(dup)
-
-        def count_in_masked(has_dup: set[int]) -> int:
-            maskeds_idx = colors_per_mask.index(has_dup)
-            return (maskeds[maskeds_idx] == dup).sum()
-
-        have_dup = [x for x in colors_per_mask if dup in x]
-        have_dup = sorted(have_dup, key=count_in_masked)
-        for cols in have_dup:
-            if count_in_masked(cols) == count_in_masked(have_dup[-1]):
-                continue
-            assert count_in_masked(cols) < count_in_masked(have_dup[-1])
-            cols.remove(dup)
-        have_dup = [x for x in colors_per_mask if dup in x]
-        if len(have_dup) == 1:
-            continue
-
-        if have_dup:
-            breakpoint()
-
-    pick: list[int | None] = [None] * num_cols
-    for i, mask in enumerate(masks):
-
-        # masked = state_copy[np.where(mask == 1)]
-        # pmatrix = target.clusters.members.pmatrix
-        image = target.image
+    pick: list[int | None] = pick_ or [None] * num_cols
+    for _ in range(num_cols):
 
         get_cost = functools.partial(
             _get_palette_color_cost,
             target.clusters.members,
-            image[np.where(mask)],
             pick,
             mood,
         )
@@ -666,87 +603,32 @@ def posterize_to_n_colors(
             return get_palette_prox(col) > 16
 
         open_idxs = [j for j, p in enumerate(pick) if p is None]
-        cols: set[int] = set().union(*(colors_per_mask[j] for j in open_idxs))
+        cols = set(it.chain(*(colors_per_mask[i] for i in open_idxs)))
         cols = set(filter(sufficient_contrast, cols))
         if not cols:
-            cols = set().union(*colors_per_mask) - set(pick)
-            cols = set(filter(sufficient_contrast, cols))
+            cols = set(filter(sufficient_contrast, it.chain(*colors_per_mask)))
         # TODO: raise and catch a different error
         if not cols:
             raise NotImplementedError
 
-
-        # if mood == Mood.CONTRAST:
-        #     pick = [max(cols, key=lambda x: _qtfy_colorful(vectors[x]))]
-        #     break
-
-        # cols2 = set(cols)
-        # for col, pal in it.product(cols, pick):
-        #     if col not in cols2:
-        #         continue
-        #     col_vec = target.clusters.members.vectors[col]
-        #     pal_vec = target.clusters.members.vectors[pal]
-        #     if get_delta_e(col_vec, pal_vec) < 16:
-        #         cols2.remove(col)
-        # if cols2:
-        #     cols = cols2
-
-        # if mood == Mood.COLORFUL:
-        #     aaa = [target.clusters.members.vectors[x] for x in cols]
-        #     mrds = []
-        #     costs = []
-        #     for x, y in it.product(cols, pick):
-        #         xxx = target.clusters.members.vectors[x]
-        #         yyy = target.clusters.members.vectors[y]
-        #         mrds.append((x, y, _get_radial_distance(rgb_to_hsv(xxx)[0], rgb_to_hsv(yyy)[0])))
-        #         costs.append([x, y, get_cost(x)])
-
-        #     # costs = [get_cost(x) for x in cols]
-        #     # if min(costs) > -16:
-        #     #     breakpoint()
-
-        # def get_palette_prox(col: int) -> float:
-        #     if not pick_vecs:
-        #         return np.inf
-        #     col_vec = target.clusters.members.vectors[col]
-        #     return min(get_delta_e(col_vec, x) for x in pick_vecs)
-
         best_col = get_cost(cols)
-        # min_prox = get_palette_prox(best_col)
-        # if min_prox < 16:
-        #     best_col = max(cols, key=get_palette_prox)
-        # min_prox = get_palette_prox(best_col)
-
-        # left_over_cols: set[int] = set().union(*colors_per_mask[: i + 1]) - set(pick)
-
-        # left_over_cols = {x for x in left_over_cols if get_palette_prox(x) > 16}
-
-        # if not left_over_cols:
-        #     continue
-        # if min_prox < 16:
-        #     best_col = get_cost(left_over_cols)
-        # min_prox = get_palette_prox(best_col)
-        # if min_prox < 16:
-        #     continue
-
-        idx = [j for j, p in enumerate(colors_per_mask) if best_col in p][0]
+        idx = next(j for j, p in enumerate(colors_per_mask) if best_col in p)
         if pick[idx] is None:
             pick[idx] = best_col
         else:
             pick.append(best_col)
 
     # TODO: raise and catch a different error
-    pick = list(filter(None, pick))
-    if len(pick) < num_cols:
+    palette = list(filter(None, pick))
+    if len(palette) < num_cols:
         raise NotImplementedError
 
-    if tuple(pick) in seen:
-        print(f"***************************** skipping {mood}")
-        return
-    seen.add(tuple(pick))
+    if tuple(palette) in seen:
+        raise NotImplementedError
+    seen.add(tuple(palette))
 
-    # pick = [max(x.ixs, key=lambda x: supercluster.members.weights[x]) for x in supercluster.clusters]
-    layers = posterize(image_path, 0, tuple(pick), mood=mood)
+    _ = posterize(image_path, 0, tuple(palette), mood=mood)
+    return palette
 
 
 if __name__ == "__main__":
@@ -766,7 +648,7 @@ if __name__ == "__main__":
     ]
     for pic in pics:
         image_path = paths.PROJECT / f"tests/resources/{pic}"
-        if not image_path.exists:
+        if not image_path.exists():
             print(f"skipping {image_path}")
             continue
         seen: set[tuple[int, ...]] = set()
