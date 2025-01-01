@@ -30,9 +30,9 @@ from posterize.paths import CACHE_DIR
 from posterize import paths
 from posterize.quantization import new_supercluster_with_quantized_image
 
-_PixelVector: TypeAlias = Annotated[npt.NDArray[np.float64], "(r,3)"]
-_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int64], "(r,c)"]
-_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int64], "(n,r,c)"]
+_PixelVector: TypeAlias = Annotated[npt.NDArray[np.float32], "(r,3)"]
+_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int32], "(r,c)"]
+_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int32], "(n,r,c)"]
 
 _TMP_BMP = CACHE_DIR / "temp.bmp"
 

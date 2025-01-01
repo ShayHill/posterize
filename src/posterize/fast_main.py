@@ -149,16 +149,27 @@ class TargetImage:
             raise ValueError(msg)
         return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
-    def get_cost(self, *layers: _IndexMatrix) -> float:
+    def get_cost(self, *layers: _IndexMatrix, mod: int | None = None) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
             one layer.
+        :param mod: optionally give a modulus number where contrast with layer
+            count % mod will be considered instead of contrast with the entire image.
         :return: sum of the cost between image and (state + layer)
         """
-        if layers:
-            return float(np.sum(self._get_cost_matrix(*layers)))
-        return self.state_cost
+        if mod and len(layers) != 1:
+            msg = "mod must be None if there are no layers or multiple layers."
+            raise ValueError(msg)
+        if not layers:
+            return self.state_cost
+        cost_matrix = self._get_cost_matrix(*layers)
+
+        layer_idx = len(self._layers)
+        if mod and layer_idx // mod:
+            mask = _merge_layers(*self.layers[:mod])
+            cost_matrix[np.where(mask != layer_idx // mod)] = 0
+        return float(np.sum(cost_matrix))
 
     @property
     def state_cost(self) -> float:
@@ -255,13 +266,16 @@ class TargetImage:
         # print(f"generated {len(self.clusters.clusters)} colors")
         return [x.centroid for x in self.clusters.clusters]
 
-    def get_best_candidate(self) -> _IndexMatrix:
+    def get_best_candidate(self, mod: int | None = None) -> _IndexMatrix:
         """Get the best candidate layer.
 
+        :param mod: optionally give a modulus number where contrast with layer
+            count % mod will be considered instead of contrast with the entire image.
         :return: the candidate layer with the lowest cost
+
         """
         candidates = map(self.new_candidate_layer, self.get_colors())
-        scored = ((self.get_cost(x), x) for x in candidates)
+        scored = ((self.get_cost(x, mod=mod), x) for x in candidates)
         return min(scored, key=itemgetter(0))[1]
 
 
@@ -320,7 +334,7 @@ def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path
 
 def posterize(
     image_path: Path,
-    bite_size: float | None = None,
+    bite_size: float,
     ixs: _IndexVectorLike | None = None,
     num_cols: int | None = None,
     mood: str | None = None,
@@ -331,35 +345,45 @@ def posterize(
 
     :param image_path: path to the image
     :param bite_size: the max average error of the cluster removed for each color
-    :param ixs: optionally pass a subset of the palette indices to use
+    :param ixs: optionally pass a subset of the palette indices to use. This is used
+        with bite_size == 0 to generate an image with exactly the colors in ixs.
     :return: posterized image
     """
     print(f"{bite_size=}")
-    ignore_cache = True
 
     target = TargetImage(image_path, bite_size, ignore_cache=ignore_cache)
+    print("return from TargetImage init")
 
+    print("creating and possibly reading cache_path")
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
+        print("    loading cache path")
         target.layers = np.load(cache_path)
+        print("    complete loading cache path")
         return target
+    print("done with cache path")
 
+    print(f"------ appending layers")
+    TIME = time.time()
     if ixs:
         target.clusters = target.clusters.copy(inc_members=ixs)
-    while len(target.clusters.ixs) > 0:
-        target.append_layer(target.get_best_candidate())
+    while len(target.clusters.ixs) > 0:  # until all colors are used
+        target.append_layer(target.get_best_candidate(mod=6))
+    print(f"------ time to append layers: {time.time() - TIME}")
 
-    if num_cols is not None and len(target.layers) < 12:
+    if len(target.layers) < (num_cols or 1):
         return posterize(
             image_path,
-            bite_size * 0.66,
+            max(bite_size - 1, 0),
             ixs,
             num_cols,
             mood,
             ignore_cache=ignore_cache,
         )
 
+    TIME = time.time()
     _draw_target(target, num_cols, mood or "")
+    print(f"------ time to draw target: {time.time() - TIME}")
 
     np.save(cache_path, target.layers)
 
@@ -646,17 +670,21 @@ def posterize_to_n_colors(
     seen: set[tuple[int, ...]] | None = None,
     pick_: list[int | None] | None = None,
     min_dist: float = 16,
-) -> list[int]:
+) -> list[int] | None:
 
     print(f"{image_path.stem} {mood} {min_dist}")
 
+
+    if min_dist < 4:
+        return None
+
     seen = set() if seen is None else seen
-    # print(seen)
 
     ixs_ = () if ixs is None else tuple(ixs)
     target = posterize(image_path, bite_size, ixs_, num_cols, None, ignore_cache=False)
     state_copy = target.state.copy()
-    vectors = target.clusters.members.vectors
+    members = target.clusters.members
+    vectors = members.vectors
 
     if len(target.layers) < num_cols:
         raise NotImplementedError
@@ -664,6 +692,8 @@ def posterize_to_n_colors(
     state_at_n = _merge_layers(*target.layers[:num_cols])
     net_colors = [x for x in np.unique(state_at_n) if x != -1]
     masks = [np.where(state_at_n == x, 1, 0) for x in net_colors]
+
+    print("about to deal with moods")
 
     if mood == Mood.FAITHFUL:
         _ = posterize(image_path, 0, net_colors, mood=mood)
@@ -680,15 +710,15 @@ def posterize_to_n_colors(
     masks = [shrink_mask(m, 1) for m in masks]
     colors_per_mask = _separate_colors([state_copy[np.where(m == 1)] for m in masks])
 
+    print("colors separated")
+
     pick: list[int | None] = pick_ or [None] * num_cols
+
+    print("beginning pick")
+    TIME = time.time()
     while len(list(filter(None, pick))) < num_cols:
 
-        get_cost = functools.partial(
-            _get_palette_color_cost,
-            target.clusters.members,
-            pick,
-            mood,
-        )
+        get_cost = functools.partial(_get_palette_color_cost, members, pick, mood)
 
         pick_vecs = [vectors[p] for p in pick if p is not None]
 
@@ -731,14 +761,10 @@ def posterize_to_n_colors(
             else:
                 required = num_cols - sum(1 for p in pick if p is not None)
                 vib_cols = _select_vibrant(vectors, all_cols, required)
-                try:
-                    candidates = _iter_candidates(pick, vib_cols, num_cols)
-                    best = max(
-                        candidates, key=functools.partial(_qtfy_hue_contrast, vectors)
-                    )
-                except:
-                    pass
-                    # breakpoint()
+                candidates = _iter_candidates(pick, vib_cols, num_cols)
+                best = max(
+                    candidates, key=functools.partial(_qtfy_hue_contrast, vectors)
+                )
                 pick = list(best)
 
         best_col = get_cost(cols)
@@ -747,6 +773,7 @@ def posterize_to_n_colors(
             pick[idx] = best_col
         else:
             pick.append(best_col)
+    print(f"------ time to pick colors: {time.time() - TIME}")
 
     # TODO: raise and catch a different error
     palette = list(filter(None, pick))
@@ -831,6 +858,8 @@ if __name__ == "__main__":
 
         cached: dict[Mood, list[int]] = {}
         for mood in Mood:
+            mood = Mood.CONTRAST
+            print(f"==============={pic} -- {mood}")
             if mood == Mood.CONTRAST:
                 moods = (Mood.VIBRANT, Mood.MUTED, Mood.MARSS, Mood.DEEP, Mood.NEUTRAL)
                 voters = filter(None, (cached.get(x) for x in moods))
@@ -842,9 +871,10 @@ if __name__ == "__main__":
             else:
                 pick = None
             with suppress(NotImplementedError):
-                # if mood == Mood.FAITHFUL:
-                cached[mood] = pos(mood=mood, pick_=pick)
-            # break
+                palette = pos(mood=mood, pick_=pick)
+                if palette is not None:
+                    cached[mood] = palette
+            break
 
     print("done")
 
