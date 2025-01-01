@@ -4,6 +4,7 @@ import logging
 import pickle
 from operator import itemgetter
 import copy
+import numpy as np
 from pathlib import Path
 from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias, TypeVar, cast
 from contextlib import suppress
@@ -53,6 +54,14 @@ _MAX_DELTA_E = get_delta_e_lab((0, 127, 127), (100, -128, -128))
 WHITE = (255, 255, 255)
 
 
+class SumSupercluster(SuperclusterBase):
+    """A SuperclusterBase that uses divisive clustering."""
+
+    quality_metric = "sum_error"
+    quality_centroid = "weighted_medoid"
+    assignment_centroid = "weighted_medoid"
+    clustering_method = "divisive"
+
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
@@ -60,7 +69,6 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
-
 
 # _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
@@ -148,7 +156,9 @@ class TargetImage:
             raise ValueError(msg)
         return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
-    def get_cost(self, *layers: _IndexMatrix, mod: int | None = None) -> float:
+    def get_cost(
+        self, *layers: _IndexMatrix, mod: int | None = None
+    ) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -161,14 +171,17 @@ class TargetImage:
             msg = "mod must be None if there are no layers or multiple layers."
             raise ValueError(msg)
         if not layers:
-            return self.state_cost
+            return (self.state_cost, self.state_cost)
         cost_matrix = self._get_cost_matrix(*layers)
+        primary = float(np.sum(cost_matrix))
+        fallback = primary
 
         layer_idx = len(self._layers)
         if mod and layer_idx // mod:
             mask = _merge_layers(*self.layers[:mod])
-            cost_matrix[np.where(mask != layer_idx // mod)] = 0
-        return float(np.sum(cost_matrix))
+            cost_matrix[np.where(mask != layer_idx - mod)] = 0
+            primary = float(np.sum(cost_matrix))
+        return primary, fallback
 
     @property
     def state_cost(self) -> float:
@@ -331,10 +344,6 @@ def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path
     return (paths.CACHE_DIR / stem).with_suffix(suffix)
 
 
-
-
-
-
 def posterize(
     image_path: Path,
     bite_size: float,
@@ -352,6 +361,7 @@ def posterize(
         with bite_size == 0 to generate an image with exactly the colors in ixs.
     :return: posterized image
     """
+    ignore_cache = True
     print(f"{bite_size=}")
 
     if ixs and num_cols and len(ixs) < num_cols:
@@ -359,6 +369,21 @@ def posterize(
         raise ValueError(msg)
 
     target = TargetImage(image_path, bite_size)
+    # vectors = target.clusters.members.vectors
+    # new_ixs = target.clusters.ixs
+    # new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
+    # new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
+    # new_ixs = [x for x in new_ixs if rgb_to_hsv(vectors[x])[1] > 70]
+    # rgb = (103, 66, 30)
+    # rgbs = [tuple(vectors[x]) for x in new_ixs]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (0, 0, 0)) > 10]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (152, 138, 108)) > 10]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (153, 143, 116)) > 10]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (195, 195, 182)) > 10]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (193, 143, 99)) > 10]
+    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (228, 217, 175)) > 10]
+    # target.clusters = target.clusters.copy(inc_members=new_ixs)
+    # breakpoint()
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
@@ -656,6 +681,23 @@ def _iter_candidates(
             yield known + candidate
 
 
+def _get_subset_weights(members: Members, ixs: _IndexVectorLike) -> list[float]:
+    """Get the cumulative weight of vectors at index and their nearest neighbors."""
+    ixs = sorted(ixs)
+    subset_cols = members.pmatrix[:, ixs]
+    nearest_per_row = np.argmin(subset_cols, axis=1)
+    nearest_rows_per_idx = (np.where(nearest_per_row == i) for i in range(len(ixs)))
+    return [np.sum(members.weights[x]) for x in nearest_rows_per_idx]
+
+
+def re_weigh(members: Members, ixs: _IndexVectorLike) -> Members:
+    ixs = sorted(ixs)
+    subset_vectors = members.vectors[ixs]
+    subset_weights = _get_subset_weights(members, ixs)
+    subset_pmatrix = members.pmatrix[np.ix_(ixs, ixs)]
+    return Members(subset_vectors, weights=subset_weights, pmatrix=subset_pmatrix)
+
+
 def posterize_to_n_colors(
     image_path: Path,
     ixs: _IndexVectorLike,
@@ -668,132 +710,147 @@ def posterize_to_n_colors(
 ) -> list[int] | None:
 
     print(f"{image_path.stem} {mood} {min_dist}")
+    target = posterize(image_path, 24, ixs, 12, 6, ignore_cache=False)
+    _draw_target(target, 6, "input_06")
+    _draw_target(target, 12, "input_12")
+    # _draw_target(target, 18, "input_12")
 
+    kept = np.unique(_merge_layers(*target.layers[:12]))
+    members = re_weigh(target.clusters.members, kept)
+    clusters = SumSupercluster(members)
+    clusters.set_n(6)
+    palette = [x.centroid for x in clusters.clusters]
+    palette = [kept[x] for x in palette]
+    target = posterize(image_path, 0, palette, ignore_cache=True)
+    _draw_target(target, 6, "input_selected")
 
-    if min_dist < 4:
-        return None
+    # if min_dist < 4:
+    #     return None
 
-    seen = set() if seen is None else seen
+    # seen = set() if seen is None else seen
 
-    ixs_ = () if ixs is None else tuple(ixs)
+    # ixs_ = () if ixs is None else tuple(ixs)
 
-    target = posterize(image_path, bite_size, ixs_, num_cols, ignore_cache=False)
-    _draw_target(target, num_cols, mood or "")
+    # target = posterize(image_path, bite_size, ixs_, num_cols, ignore_cache=False)
+    # _draw_target(target, num_cols, mood or "")
 
-    state_copy = target.state.copy()
-    members = target.clusters.members
-    vectors = members.vectors
+    # state_copy = target.state.copy()
+    # members = target.clusters.members
+    # vectors = members.vectors
 
-    if len(target.layers) < num_cols:
-        raise NotImplementedError
+    # if len(target.layers) < num_cols:
+    #     raise NotImplementedError
 
-    state_at_n = _merge_layers(*target.layers[:num_cols])
-    net_colors = [x for x in np.unique(state_at_n) if x != -1]
-    masks = [np.where(state_at_n == x, 1, 0) for x in net_colors]
+    # state_at_n = _merge_layers(*target.layers[:num_cols])
+    # net_colors = [x for x in np.unique(state_at_n) if x != -1]
+    # masks = [np.where(state_at_n == x, 1, 0) for x in net_colors]
 
-    print("about to deal with moods")
+    # print("about to deal with moods")
 
-    if mood == Mood.FAITHFUL:
-        _ = posterize(image_path, 0, net_colors)
-        _draw_target(target, num_cols, mood or "")
+    # if mood == Mood.FAITHFUL:
+    #     _ = posterize(image_path, 0, net_colors)
+    #     _draw_target(target, num_cols, mood or "")
 
-        # write a palette
-        print("writing faithful palette")
-        dist = target.get_distribution(net_colors)
-        color_blocks = sliver_color_blocks(vectors[net_colors], list(map(float, dist)))
-        output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
-        write_palette(image_path, color_blocks, output_name)
+    #     # write a palette
+    #     print("writing faithful palette")
+    #     dist = target.get_distribution(net_colors)
+    #     color_blocks = sliver_color_blocks(vectors[net_colors], list(map(float, dist)))
+    #     output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
+    #     write_palette(image_path, color_blocks, output_name)
 
-        return net_colors
+    #     return net_colors
 
-    masks = [shrink_mask(m, 1) for m in masks]
-    colors_per_mask = _separate_colors([state_copy[np.where(m == 1)] for m in masks])
+    # masks = [shrink_mask(m, 1) for m in masks]
+    # colors_per_mask = _separate_colors([state_copy[np.where(m == 1)] for m in masks])
 
-    print("colors separated")
+    # print("colors separated")
 
-    pick: list[int | None] = pick_ or [None] * num_cols
+    # pick: list[int | None] = pick_ or [None] * num_cols
 
-    print("beginning pick")
-    TIME = time.time()
-    while len(list(filter(None, pick))) < num_cols:
+    # print("beginning pick")
+    # TIME = time.time()
+    # while len(list(filter(None, pick))) < num_cols:
 
-        get_cost = functools.partial(_get_palette_color_cost, members, pick, mood)
+    #     get_cost = functools.partial(_get_palette_color_cost, members, pick, mood)
 
-        pick_vecs = [vectors[p] for p in pick if p is not None]
+    #     pick_vecs = [vectors[p] for p in pick if p is not None]
 
-        def get_palette_prox(col: int) -> float:
-            col_vec = vectors[col]
-            return min((get_delta_e(col_vec, p) for p in pick_vecs), default=np.inf)
+    #     def get_palette_prox(col: int) -> float:
+    #         col_vec = vectors[col]
+    #         return min((get_delta_e(col_vec, p) for p in pick_vecs), default=np.inf)
 
-        def sufficient_contrast(col: int) -> bool:
-            has_contrast = get_palette_prox(col) > min_dist
-            return has_contrast and get_delta_e(vectors[col], WHITE) > 10
+    #     def sufficient_contrast(col: int) -> bool:
+    #         has_contrast = get_palette_prox(col) > min_dist
+    #         return has_contrast and get_delta_e(vectors[col], WHITE) > 10
 
-        all_cols = set(filter(sufficient_contrast, it.chain(*colors_per_mask)))
-        if not all_cols:
-            return posterize_to_n_colors(
-                image_path,
-                ixs,
-                bite_size,
-                num_cols,
-                mood,
-                seen,
-                pick_,
-                min_dist - 4,
-            )
+    #     all_cols = set(filter(sufficient_contrast, it.chain(*colors_per_mask)))
+    #     if not all_cols:
+    #         return posterize_to_n_colors(
+    #             image_path,
+    #             ixs,
+    #             bite_size,
+    #             num_cols,
+    #             mood,
+    #             seen,
+    #             pick_,
+    #             min_dist - 4,
+    #         )
 
-        open_idxs = [j for j, p in enumerate(pick) if p is None]
-        cols = set(it.chain(*(colors_per_mask[i] for i in open_idxs)))
-        cols = set(filter(sufficient_contrast, cols))
-        cols = cols or all_cols
+    #     open_idxs = [j for j, p in enumerate(pick) if p is None]
+    #     cols = set(it.chain(*(colors_per_mask[i] for i in open_idxs)))
+    #     cols = set(filter(sufficient_contrast, cols))
+    #     cols = cols or all_cols
 
-        if mood == Mood.CONTRAST:
-            if sum(1 for p in pick if p is not None) < 2:
-                pass
-            else:
-                candidates = _iter_candidates(pick, all_cols, num_cols)
-                best = max(candidates, key=functools.partial(_qtfy_contrast, vectors))
-                pick = list(best)
-        if mood == Mood.COLORFUL:
-            if sum(1 for p in pick if p is not None) < 2:
-                pass
-            else:
-                required = num_cols - sum(1 for p in pick if p is not None)
-                vib_cols = _select_vibrant(vectors, all_cols, required)
-                candidates = _iter_candidates(pick, vib_cols, num_cols)
-                best = max(
-                    candidates, key=functools.partial(_qtfy_hue_contrast, vectors)
-                )
-                pick = list(best)
+    #     if mood == Mood.CONTRAST:
+    #         if sum(1 for p in pick if p is not None) < 2:
+    #             pass
+    #         else:
+    #             candidates = _iter_candidates(pick, all_cols, num_cols)
+    #             best = max(candidates, key=functools.partial(_qtfy_contrast, vectors))
+    #             pick = list(best)
+    #     if mood == Mood.COLORFUL:
+    #         if sum(1 for p in pick if p is not None) < 2:
+    #             pass
+    #         else:
+    #             required = num_cols - sum(1 for p in pick if p is not None)
+    #             vib_cols = _select_vibrant(vectors, all_cols, required)
+    #             candidates = _iter_candidates(pick, vib_cols, num_cols)
+    #             best = max(
+    #                 candidates, key=functools.partial(_qtfy_hue_contrast, vectors)
+    #             )
+    #             pick = list(best)
 
-        best_col = get_cost(cols)
-        idx = next(j for j, p in enumerate(colors_per_mask) if best_col in p)
-        if pick[idx] is None:
-            pick[idx] = best_col
-        else:
-            pick.append(best_col)
-    print(f"------ time to pick colors: {time.time() - TIME}")
+    #     best_col = get_cost(cols)
+    #     idx = next(j for j, p in enumerate(colors_per_mask) if best_col in p)
+    #     if pick[idx] is None:
+    #         pick[idx] = best_col
+    #     else:
+    #         pick.append(best_col)
+    # print(f"------ time to pick colors: {time.time() - TIME}")
 
-    # TODO: raise and catch a different error
-    palette = list(filter(None, pick))
-    if len(palette) < num_cols:
-        raise NotImplementedError
+    # # TODO: raise and catch a different error
+    # palette = list(filter(None, pick))
+    # if len(palette) < num_cols:
+    #     raise NotImplementedError
 
-    if tuple(palette) not in seen:
-        _ = posterize(image_path, 0, tuple(palette))
-        _draw_target(target, num_cols, mood or "")
+    # if tuple(palette) not in seen:
+    #     _ = posterize(image_path, 0, tuple(palette))
+    #     _draw_target(target, num_cols, mood or "")
 
-    # write a palette
+    # # write a palette
 
-    pal2 = palette[:0]
-    for p in palette:
-        if p not in pal2:
-            pal2.append(p)
-    palette = pal2
+    # pal2 = palette[:0]
+    # for p in palette:
+    #     if p not in pal2:
+    #         pal2.append(p)
+    # palette = pal2
+
+    vectors = target.clusters.members.vectors
 
     dist = target.get_distribution(palette)
     color_blocks = sliver_color_blocks(vectors[palette], list(map(float, dist)))
     output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
+
     write_palette(image_path, color_blocks, output_name)
 
     seen.add(tuple(palette))
