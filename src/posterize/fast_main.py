@@ -3,6 +3,7 @@ import functools
 import logging
 import pickle
 from operator import itemgetter
+import copy
 from pathlib import Path
 from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias, TypeVar, cast
 from contextlib import suppress
@@ -84,8 +85,6 @@ class TargetImage:
         self,
         path: Path,
         bite_size: float | None = None,
-        *,
-        ignore_cache: bool = False,
     ) -> None:
         """Initialize a TargetImage.
 
@@ -332,12 +331,16 @@ def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path
     return (paths.CACHE_DIR / stem).with_suffix(suffix)
 
 
+
+
+
+
 def posterize(
     image_path: Path,
     bite_size: float,
     ixs: _IndexVectorLike | None = None,
     num_cols: int | None = None,
-    mood: str | None = None,
+    mod_cols: int | None = None,
     *,
     ignore_cache: bool = True,
 ) -> TargetImage:
@@ -351,25 +354,23 @@ def posterize(
     """
     print(f"{bite_size=}")
 
-    target = TargetImage(image_path, bite_size, ignore_cache=ignore_cache)
-    print("return from TargetImage init")
+    if ixs and num_cols and len(ixs) < num_cols:
+        msg = "ixs must be None or have at least as many colors as num_cols."
+        raise ValueError(msg)
 
-    print("creating and possibly reading cache_path")
+    target = TargetImage(image_path, bite_size)
+
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
-        print("    loading cache path")
         target.layers = np.load(cache_path)
-        print("    complete loading cache path")
-        return target
-    print("done with cache path")
+    else:
+        if ixs:
+            target.clusters = target.clusters.copy(inc_members=ixs)
 
-    print(f"------ appending layers")
-    TIME = time.time()
-    if ixs:
-        target.clusters = target.clusters.copy(inc_members=ixs)
-    while len(target.clusters.ixs) > 0:  # until all colors are used
-        target.append_layer(target.get_best_candidate(mod=6))
-    print(f"------ time to append layers: {time.time() - TIME}")
+        while len(target.clusters.ixs) > 0:  # until all colors are used
+            target.append_layer(target.get_best_candidate(mod=mod_cols))
+
+    np.save(cache_path, target.layers)
 
     if len(target.layers) < (num_cols or 1):
         return posterize(
@@ -377,15 +378,9 @@ def posterize(
             max(bite_size - 1, 0),
             ixs,
             num_cols,
-            mood,
+            mod_cols,
             ignore_cache=ignore_cache,
         )
-
-    TIME = time.time()
-    _draw_target(target, num_cols, mood or "")
-    print(f"------ time to draw target: {time.time() - TIME}")
-
-    np.save(cache_path, target.layers)
 
     return target
 
@@ -681,7 +676,10 @@ def posterize_to_n_colors(
     seen = set() if seen is None else seen
 
     ixs_ = () if ixs is None else tuple(ixs)
-    target = posterize(image_path, bite_size, ixs_, num_cols, None, ignore_cache=False)
+
+    target = posterize(image_path, bite_size, ixs_, num_cols, ignore_cache=False)
+    _draw_target(target, num_cols, mood or "")
+
     state_copy = target.state.copy()
     members = target.clusters.members
     vectors = members.vectors
@@ -696,7 +694,8 @@ def posterize_to_n_colors(
     print("about to deal with moods")
 
     if mood == Mood.FAITHFUL:
-        _ = posterize(image_path, 0, net_colors, mood=mood)
+        _ = posterize(image_path, 0, net_colors)
+        _draw_target(target, num_cols, mood or "")
 
         # write a palette
         print("writing faithful palette")
@@ -781,7 +780,8 @@ def posterize_to_n_colors(
         raise NotImplementedError
 
     if tuple(palette) not in seen:
-        _ = posterize(image_path, 0, tuple(palette), mood=mood)
+        _ = posterize(image_path, 0, tuple(palette))
+        _draw_target(target, num_cols, mood or "")
 
     # write a palette
 
