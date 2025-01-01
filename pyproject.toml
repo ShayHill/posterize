@@ -15,17 +15,19 @@ dependencies = [
   "scipy",
   "stacked-quantile",
   "svg-ultralight",
+  "palette_image @ git+ssh://git@github.com/ShayHill/palette_image"
 ]
 
 [project.optional-dependencies]
 dev = [
-  "conventional-with-data",
+  # "conventional-with-data",
   "pre-commit",
   "pytest",
   "tox",
   "types-lxml",
   "types-pillow"
 ]
+
 
 [build-system]
 requires = ["setuptools", "setuptools-scm"]

@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias, TypeVar, cast
 from contextlib import suppress
 import itertools as it
+import time
+
+from palette_image.svg_display import write_palette
+from palette_image.color_block_ops import sliver_color_blocks
 
 import numpy as np
 from basic_colormath import get_delta_e, rgb_to_hsv, hsv_to_rgb, get_delta_e_lab
@@ -90,6 +94,8 @@ class TargetImage:
             cluster is vibrant, max error will be limited to bite_size. If the
             cluster is not vibrant, average error will be limited to bite_size.
         """
+        TIME = time.time()
+
         self._path = path
         self._bite_size = 9 if bite_size is None else bite_size
 
@@ -101,6 +107,8 @@ class TargetImage:
         self._layers = np.empty((0,) + self.image.shape[:2], dtype=int)
         self.state = np.ones_like(self.image) * -1
         self.state_cost_matrix = np.ones_like(self.image) * np.inf
+
+        print(f"------ TargetImage init time: {time.time() - TIME}")
 
     @property
     def layers(self) -> _IndexMatrices:
@@ -116,6 +124,14 @@ class TargetImage:
     def cache_stem(self) -> str:
         cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
         return f"{self._path.stem}-{cache_bite_size}"
+
+    def get_distribution(self, indices: _IndexVectorLike) -> npt.NDArray[np.intp]:
+        """Count the pixels best approximated by each palette index."""
+        pmatrix = self.clusters.members.pmatrix
+        select_cols = pmatrix[:, indices]
+        closest_per_color = np.argmin(select_cols, axis=1)
+        image_approx = closest_per_color[self.image]
+        return np.bincount(image_approx.flatten(), minlength=len(indices))
 
     def _get_cost_matrix(self, *layers: _IndexMatrix) -> _ErrorArray:
         """Get the cost-per-pixel between self.image and (state + layers).
@@ -336,7 +352,7 @@ def posterize(
     if num_cols is not None and len(target.layers) < 12:
         return posterize(
             image_path,
-            bite_size * 0.95,
+            bite_size * 0.66,
             ixs,
             num_cols,
             mood,
@@ -548,7 +564,7 @@ def _separate_colors(layers: list[npt.NDArray[np.int32]]) -> list[set[int]]:
     return cols_per_layer
 
 
-def _elect_palette(*palettes: list[int | None]) -> list[int | None]:
+def _elect_palette(*palettes: list[int]) -> list[int | None]:
     """Assign a value to each palette index if it represents a majority.
 
     :param palettes: lists of palette indices
@@ -651,6 +667,14 @@ def posterize_to_n_colors(
 
     if mood == Mood.FAITHFUL:
         _ = posterize(image_path, 0, net_colors, mood=mood)
+
+        # write a palette
+        print("writing faithful palette")
+        dist = target.get_distribution(net_colors)
+        color_blocks = sliver_color_blocks(vectors[net_colors], list(map(float, dist)))
+        output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
+        write_palette(image_path, color_blocks, output_name)
+
         return net_colors
 
     masks = [shrink_mask(m, 1) for m in masks]
@@ -713,7 +737,8 @@ def posterize_to_n_colors(
                         candidates, key=functools.partial(_qtfy_hue_contrast, vectors)
                     )
                 except:
-                    breakpoint()
+                    pass
+                    # breakpoint()
                 pick = list(best)
 
         best_col = get_cost(cols)
@@ -730,6 +755,20 @@ def posterize_to_n_colors(
 
     if tuple(palette) not in seen:
         _ = posterize(image_path, 0, tuple(palette), mood=mood)
+
+    # write a palette
+
+    pal2 = palette[:0]
+    for p in palette:
+        if p not in pal2:
+            pal2.append(p)
+    palette = pal2
+
+    dist = target.get_distribution(palette)
+    color_blocks = sliver_color_blocks(vectors[palette], list(map(float, dist)))
+    output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
+    write_palette(image_path, color_blocks, output_name)
+
     seen.add(tuple(palette))
     print(f"{len(palette)=}")
     return palette
@@ -737,25 +776,49 @@ def posterize_to_n_colors(
 
 if __name__ == "__main__":
     pics = [
-        "hotel.jpg",
-        # "Johannes Vermeer - The Milkmaid.jpg",
-        # "Johannes Vermeer - Girl with a Pearl Earring.jpg",
-        # "cafe_at_arles.jpg",
-        # "manet.jpg",
         # "adidas.jpg",
-        # "broadway.jpg",
-        # "starry_night.jpg",
-        # "eyes.jpg",
-        # "you_the_living.jpg",
-        # "pencils.jpg",
-        # "dutch.jpg",
+        # "bird.jpg",
         # "blue.jpg",
+        # "broadway.jpg",
+        # "bronson.jpg",
+        # "cafe_at_arles.jpg",
+        # "dolly.jpg",
+        # "dutch.jpg",
+        # "Ernest - Figs.jpg",
+        # "eyes.jpg",
+        # "Flâneur - Al Carbon.jpg",
+        # "Flâneur - Coffee.jpg",
+        # "Flâneur - Japan.jpg",
+        # "Flâneur - Japan2.jpg",
+        # "Flâneur - Lavenham.jpg",
+        # "girl.jpg",
+        # "girl_p.jpg",
+        # "hotel.jpg",
+        # "Johannes Vermeer - The Milkmaid.jpg",
+        # "lena.jpg",
+        # "lion.jpg",
+        # "manet.jpg",
+        # "parrot.jpg",
+        # "pencils.jpg",
+        # "Retrofuturism - One.jpg",
+        # "roy_green_car.jpg",
+        "Sci-Fi - Outland.jpg",
+        # "seb.jpg",
+        # "starry_night.jpg",
+        # "taleb.jpg",
+        # "tilda.jpg",
+        # "you_the_living.jpg",
     ]
+    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    # pics = ["bronson.jpg"]
+    # for pic in pics:
+    #     print(pic)
     for pic in pics:
         image_path = paths.PROJECT / f"tests/resources/{pic}"
         if not image_path.exists():
             print(f"skipping {image_path}")
             continue
+        print(f"processing {image_path}")
         seen: set[tuple[int, ...]] = set()
         pos = functools.partial(
             posterize_to_n_colors,
@@ -779,7 +842,9 @@ if __name__ == "__main__":
             else:
                 pick = None
             with suppress(NotImplementedError):
+                # if mood == Mood.FAITHFUL:
                 cached[mood] = pos(mood=mood, pick_=pick)
+            # break
 
     print("done")
 
