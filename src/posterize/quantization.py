@@ -126,11 +126,9 @@ def new_supercluster_with_quantized_image(
     * Update supercluster.members.weights to contain the number of times each vector
       is used in the image approximation.
     """
-    print(f"Quantizing {path.name} to {supercluster_type.__name__}")
     supercluster = get_image_supercluster(
         supercluster_type, path, ignore_cache=ignore_cache
     )
-    print(f"Quantizing complete: {path.name} to {supercluster_type.__name__}")
     pixel_indices = _map_pixels_to_members_vectors(
         supercluster, path, ignore_cache=ignore_cache
     )
