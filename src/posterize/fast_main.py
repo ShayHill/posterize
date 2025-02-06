@@ -25,19 +25,20 @@ from posterize.convolution import shrink_mask
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
+from typing import Any
 logging.basicConfig(level=logging.INFO)
 
 # an image-sized array of -1 where transparent and palette indices where opaque
-_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int32], "(r,c)"]
-_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int32], "(n,r,c)"]
+_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(r,c)"]
+_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,r,c)"]
 
-_IndexVector: TypeAlias = Annotated[npt.NDArray[np.int32], "(n,)"]
+_IndexVector: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,)"]
 _IndexVectorLike: TypeAlias = _IndexVector | Sequence[int]
-_LabArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,3)"]
+_LabArray: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(n,m,3)"]
 _MonoPixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,1)"]
-_ErrorArray: TypeAlias = Annotated[npt.NDArray[np.float64], "(n,m,1)"]
+_ErrorArray: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(n,m,1)"]
 _RGBTuple = tuple[int, int, int]
-_FPArray = npt.NDArray[np.float64]
+_FPArray = npt.NDArray[np.floating[Any]]
 
 RgbLike = tuple[float, float, float] | Iterable[float]
 HsvLike = tuple[float, float, float] | Iterable[float]
