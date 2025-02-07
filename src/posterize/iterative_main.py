@@ -89,10 +89,13 @@ def _merge_layers(*layers: _IndexMatrix) -> _IndexMatrix:
         opaque pixels and -1 in transparent
     :return: one (r, c) array with the last non-transparent pixel in each position
     """
-    merged = layers[0].copy()
-    for layer in layers[1:]:
-        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
-    return merged
+    try:
+        merged = layers[0].copy()
+        for layer in layers[1:]:
+            merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
+        return merged
+    except:
+        breakpoint()
 
 
 class TargetImage:
@@ -117,8 +120,14 @@ class TargetImage:
             Supercluster, path
         )
 
-        # initialize cached properties
-        self._layers = np.empty((0,) + self.image.shape[:2], dtype=int)
+        self.pmatrix = self.clusters.members.pmatrix
+        aaa = np.ones(self.pmatrix.shape[0], dtype=int)
+        bbb = np.ones(self.pmatrix.shape[0], dtype=int) * 8 
+        bbb[np.where(np.random.random(size=bbb.shape) > 0.5)] = 9
+        self.ws = np.bincount(self.image.flatten(), minlength=self.pmatrix.shape[0])
+
+        # initialize cached propertiej
+        self._layers = np.empty((0, self.pmatrix.shape[0]), dtype=int)
         self.state = np.ones_like(self.image) * -1
         self.state_cost_matrix = np.ones_like(self.image) * np.inf
 
@@ -159,7 +168,8 @@ class TargetImage:
         if -1 in state:
             msg = "There are still transparent pixels in the state."
             raise ValueError(msg)
-        return self.clusters.members.pmatrix[self.image, state]
+        image = np.array(range(self.pmatrix.shape[0]), dtype=int)
+        return self.clusters.members.pmatrix[image, state] * self.ws
 
     def get_cost(self, *layers: _IndexMatrix) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
@@ -197,12 +207,16 @@ class TargetImage:
 
         If there are no layers, the candidate will be a solid color.
         """
-        solid = np.full(self.image.shape, palette_index)
+        solid = np.full(self.pmatrix.shape[0], palette_index)
         if len(state_layers) == 0:
             return solid
+
         solid_cost_matrix = self._get_cost_matrix(solid)
         state_cost_matrix = self._get_cost_matrix(*state_layers)
-        layer = np.full(self.image.shape, -1)
+
+
+
+        layer = np.full(self.pmatrix.shape[0], -1)
         layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
@@ -212,7 +226,10 @@ class TargetImage:
         param layer: (m, n) array with a palette index in opaque pixels and -1 in
             transparent
         """
-        self.layers = np.append(self.layers, [layer], axis=0)
+        try:
+            self.layers = np.append(self.layers, [layer], axis=0)
+        except:
+            breakpoint()
 
         if len(self.layers) > 2:
             # remove the oldest layer if there are more than 2
@@ -245,7 +262,8 @@ class TargetImage:
 
         :return: the rough color clusters in the image
         """
-        self.clusters.set_max_avg_error(self._bite_size)
+        # self.clusters.set_max_avg_error(self._bite_size)
+        return list(range(self.pmatrix.shape[0]))
         return [x.centroid for x in self.clusters.clusters]
 
     def get_best_candidate(
@@ -293,7 +311,16 @@ def _draw_target(
     vectors = target.clusters.members.vectors
     stem_parts = (target.cache_stem, len(target.layers), num_cols, stem)
     output_stem = "-".join(_stemize(*stem_parts))
-    draw_posterized_image(vectors, target.layers[:num_cols], output_stem)
+
+    layers_shape = target.layers.shape[:1] + target.image.shape
+    big_layers = np.full(layers_shape, -1, dtype=int)
+    for i, layer in enumerate(big_layers):
+        target_val = np.max(target.layers[i])
+        few_vals = _merge_layers(*target.layers[:i + 1])
+        layer[:] = few_vals[target.image]
+        layer[np.where(layer != target_val)] = -1
+
+    draw_posterized_image(vectors, big_layers[:num_cols], output_stem)
 
 
 def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
@@ -685,9 +712,10 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 4, ixs, 6, ignore_cache=False)
+        target = posterize(image_path, 1, ixs,  16, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
+        _draw_target(target, 16, "input_16")
         # _draw_target(target, 18, "input_12")
         break
 
