@@ -675,15 +675,17 @@ def posterize_to_n_colors(
     while bite_size >= 0:
         target = TargetImage(image_path, bite_size)
         vectors = target.clusters.members.vectors
-        new_ixs = target.clusters.ixs
-        new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
-        new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
-        new_ixs = [x for x in new_ixs if rgb_to_hsv(vectors[x])[1] > 40]
 
-        vs = [tuple(map(int, vectors[x])) for x in new_ixs]
-        new_ixs_array = np.array(new_ixs, dtype=np.int32)
-        target.clusters = target.clusters.copy(inc_members=new_ixs_array)
-        target = posterize(image_path, 9, ixs, 12, ignore_cache=False)
+        # strip away whites 
+        # new_ixs = target.clusters.ixs
+        # new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
+        # new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
+        # new_ixs = [x for x in new_ixs if rgb_to_hsv(vectors[x])[1] > 40]
+        # vs = [tuple(map(int, vectors[x])) for x in new_ixs]
+        # new_ixs_array = np.array(new_ixs, dtype=np.int32)
+        # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
+
+        target = posterize(image_path, 4, ixs, 6, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         # _draw_target(target, 18, "input_12")
