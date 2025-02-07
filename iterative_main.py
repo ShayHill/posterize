@@ -1,6 +1,6 @@
-"""Create a palette with backtracking after each color choice.
+"""Create a palette with backtracking after each color choicee
 
-This is an edit of fast_main, but it's too much of a departure to create without
+ehis is an edit of fast_main, but it's too much of a departure to create without
 tearing fast_main apart.
 
 :author: Shay Hill
@@ -31,6 +31,7 @@ from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
 from typing import Any
+
 logging.basicConfig(level=logging.INFO)
 
 # an image-sized array of -1 where transparent and palette indices where opaque
@@ -68,6 +69,7 @@ class SumSupercluster(SuperclusterBase):
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
 
+
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
@@ -75,6 +77,7 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
 
 # _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
@@ -152,15 +155,13 @@ class TargetImage:
 
         This should decrease after every append.
         """
-        state_with_layers_applied = _merge_layers(self.state, *layers)
-        if -1 in state_with_layers_applied:
+        state = _merge_layers(*layers)
+        if -1 in state:
             msg = "There are still transparent pixels in the state."
             raise ValueError(msg)
-        return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
+        return self.clusters.members.pmatrix[self.image, state]
 
-    def get_cost(
-        self, *layers: _IndexMatrix
-    ) -> tuple[float, float]:
+    def get_cost(self, *layers: _IndexMatrix) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -169,11 +170,10 @@ class TargetImage:
         # TODO: stop returnin fallback
         """
         if not layers:
-            return (self.state_cost, self.state_cost)
+            raise ValueError("At least one layer is required.")
         cost_matrix = self._get_cost_matrix(*layers)
         primary = float(np.sum(cost_matrix))
         return primary, primary
-
 
     @property
     def state_cost(self) -> float:
@@ -183,8 +183,13 @@ class TargetImage:
         """
         return float(np.sum(self.state_cost_matrix))
 
-    def new_candidate_layer(self, palette_index: int) -> _IndexMatrix:
+    def new_candidate_layer(
+        self, palette_index: int, state_layers: _IndexMatrices
+    ) -> _IndexMatrix:
         """Create a new candidate state.
+
+        :param palette_index: the index of the color to use in the new layer
+        :param state_layers: the current state or a presumed state
 
         A candidate is the current state with state indices replaced with
         palette_index where palette_index has a lower cost that the index in state at
@@ -193,11 +198,12 @@ class TargetImage:
         If there are no layers, the candidate will be a solid color.
         """
         solid = np.full(self.image.shape, palette_index)
-        if self.layers.shape[0] == 0:
+        if len(state_layers) == 0:
             return solid
         solid_cost_matrix = self._get_cost_matrix(solid)
+        state_cost_matrix = self._get_cost_matrix(*state_layers)
         layer = np.full(self.image.shape, -1)
-        layer[np.where(self.state_cost_matrix > solid_cost_matrix)] = palette_index
+        layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
     def append_layer(self, layer: _IndexMatrix) -> None:
@@ -216,14 +222,25 @@ class TargetImage:
         self.clusters.set_max_avg_error(self._bite_size)
         return [x.centroid for x in self.clusters.clusters]
 
-    def get_best_candidate(self) -> _IndexMatrix:
+    def get_best_candidate(
+        self, state_layers: _IndexMatrices | None = None
+    ) -> _IndexMatrix:
         """Get the best candidate layer.
 
         :return: the candidate layer with the lowest cost
         """
-        candidates = list(map(self.new_candidate_layer, self.get_colors()))
-        scored = ((self.get_cost(x), x) for x in candidates)
-        return min(scored, key=itemgetter(0))[1]
+        if state_layers is None:
+            state_layers = self.layers
+        used = set(np.unique(state_layers))
+        available_colors = [x for x in self.get_colors() if x not in used]
+
+        get_cand = functools.partial(
+            self.new_candidate_layer, state_layers=state_layers
+        )
+        candidates = tuple(map(get_cand, available_colors))
+        scored = tuple((self.get_cost(*state_layers, x), x) for x in candidates)
+        winner = min(scored, key=itemgetter(0))[1]
+        return winner
 
 
 def pick_nearest_color(
@@ -311,7 +328,7 @@ def posterize(
         if ixs:
             target.clusters = target.clusters.copy(inc_members=ixs)
 
-        while len(target.layers) < (num_cols or 1):
+        while len(target.layers) < (num_cols or 1) and len(target.layers) < len(target.get_colors()):
             target.append_layer(target.get_best_candidate())
 
     np.save(cache_path, target.layers)
