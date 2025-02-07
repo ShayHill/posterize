@@ -214,6 +214,32 @@ class TargetImage:
         """
         self.layers = np.append(self.layers, [layer], axis=0)
 
+        if len(self.layers) > 2:
+            # remove the oldest layer if there are more than 2
+            layers = self.layers.copy()
+            seen: dict[frozenset[int], float] = {}
+            key = frozenset(int(np.max(x)) for x in layers)
+            print([int(np.max(x)) for x in layers])
+            force_loops = len(layers) - 1
+            print(f"{force_loops=}")
+            force_loop_count = 0
+            while key not in seen or force_loop_count < force_loops:
+                seen[key] = self.get_cost(*layers)[0]
+                layers = np.delete(layers, 0, axis=0)
+                layers[0] = np.ones_like(layers[0]) * np.max(layers[0])
+                layers = np.append(layers, [self.get_best_candidate(layers)], axis=0)
+                key = frozenset(int(np.max(x)) for x in layers)
+                print([int(np.max(x)) for x in layers])
+                if len(key) != len(layers):
+                    msg = "There are duplicate colors in the layers."
+                    raise RuntimeError(msg)
+                force_loop_count += 1
+                if key not in seen:
+                    print(f"new_key {key}")
+                    force_loop_count = 0
+            self.layers = layers
+
+
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
 
