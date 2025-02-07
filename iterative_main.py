@@ -10,15 +10,12 @@ tearing fast_main apart.
 import enum
 import functools
 import logging
-import pickle
 from operator import itemgetter
-import copy
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias, TypeVar, cast
+from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias
 from contextlib import suppress
 import itertools as it
-import time
 
 from palette_image.svg_display import write_palette
 from palette_image.color_block_ops import sliver_color_blocks
@@ -30,7 +27,6 @@ from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
 
 from posterize import paths
-from posterize.convolution import shrink_mask
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
@@ -163,31 +159,21 @@ class TargetImage:
         return self.clusters.members.pmatrix[self.image, state_with_layers_applied]
 
     def get_cost(
-        self, *layers: _IndexMatrix, mod: int | None = None
+        self, *layers: _IndexMatrix
     ) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
             one layer.
-        :param mod: optionally give a modulus number where contrast with layer
-            count % mod will be considered instead of contrast with the entire image.
         :return: sum of the cost between image and (state + layer)
+        # TODO: stop returnin fallback
         """
-        if mod and len(layers) != 1:
-            msg = "mod must be None if there are no layers or multiple layers."
-            raise ValueError(msg)
         if not layers:
             return (self.state_cost, self.state_cost)
         cost_matrix = self._get_cost_matrix(*layers)
         primary = float(np.sum(cost_matrix))
-        fallback = primary
+        return primary, primary
 
-        layer_idx = len(self._layers)
-        if mod and layer_idx // mod:
-            mask = _merge_layers(*self.layers[:mod])
-            cost_matrix[np.where(mask != layer_idx - mod)] = 0
-            primary = float(np.sum(cost_matrix))
-        return primary, fallback
 
     @property
     def state_cost(self) -> float:
@@ -230,16 +216,13 @@ class TargetImage:
         self.clusters.set_max_avg_error(self._bite_size)
         return [x.centroid for x in self.clusters.clusters]
 
-    def get_best_candidate(self, mod: int | None = None) -> _IndexMatrix:
+    def get_best_candidate(self) -> _IndexMatrix:
         """Get the best candidate layer.
 
-        :param mod: optionally give a modulus number where contrast with layer
-            count % mod will be considered instead of contrast with the entire image.
         :return: the candidate layer with the lowest cost
-
         """
         candidates = list(map(self.new_candidate_layer, self.get_colors()))
-        scored = ((self.get_cost(x, mod=mod), x) for x in candidates)
+        scored = ((self.get_cost(x), x) for x in candidates)
         return min(scored, key=itemgetter(0))[1]
 
 
@@ -301,7 +284,6 @@ def posterize(
     bite_size: float,
     ixs: _IndexVectorLike | None = None,
     num_cols: int | None = None,
-    mod_cols: int | None = None,
     *,
     ignore_cache: bool = True,
 ) -> TargetImage:
@@ -330,7 +312,7 @@ def posterize(
             target.clusters = target.clusters.copy(inc_members=ixs)
 
         while len(target.layers) < (num_cols or 1):
-            target.append_layer(target.get_best_candidate(mod=mod_cols))
+            target.append_layer(target.get_best_candidate())
 
     np.save(cache_path, target.layers)
 
@@ -340,7 +322,6 @@ def posterize(
             max(bite_size - 1, 0),
             ixs,
             num_cols,
-            mod_cols,
             ignore_cache=ignore_cache,
         )
 
@@ -659,13 +640,13 @@ def posterize_to_n_colors(
         vs = [tuple(map(int, vectors[x])) for x in new_ixs]
         new_ixs_array = np.array(new_ixs, dtype=np.int32)
         target.clusters = target.clusters.copy(inc_members=new_ixs_array)
-        target = posterize(image_path, 9, ixs, 12, 6, ignore_cache=False)
+        target = posterize(image_path, 9, ixs, 12, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         # _draw_target(target, 18, "input_12")
         break
 
-    target = posterize(image_path, 9, new_ixs, 12, 6, ignore_cache=False)
+    target = posterize(image_path, 9, new_ixs, 12, ignore_cache=False)
 
     kept = np.unique(_merge_layers(*target.layers[:12]))
     vss_2 = [tuple(map(int, vectors[x])) for x in kept]
