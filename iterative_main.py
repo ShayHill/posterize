@@ -217,17 +217,10 @@ class TargetImage:
     def append_layer(self, layer: _IndexMatrix) -> None:
         """Append a layer to the current state.
 
-        :param layer: (m, n) array with a palette index in opaque pixels and -1 in
+        param layer: (m, n) array with a palette index in opaque pixels and -1 in
             transparent
         """
         self.layers = np.append(self.layers, [layer], axis=0)
-
-        layer_color = max(np.unique(layer))
-        assert layer_color != -1
-
-        self.clusters.set_max_avg_error(self._bite_size)
-        self.clusters = self.clusters.copy(exc_member_clusters=[layer_color])
-        # print(f"####### {len(self.clusters.ixs)} members remain")
 
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
@@ -235,7 +228,6 @@ class TargetImage:
         :return: the rough color clusters in the image
         """
         self.clusters.set_max_avg_error(self._bite_size)
-        # print(f"generated {len(self.clusters.clusters)} colors")
         return [x.centroid for x in self.clusters.clusters]
 
     def get_best_candidate(self, mod: int | None = None) -> _IndexMatrix:
@@ -246,7 +238,7 @@ class TargetImage:
         :return: the candidate layer with the lowest cost
 
         """
-        candidates = map(self.new_candidate_layer, self.get_colors())
+        candidates = list(map(self.new_candidate_layer, self.get_colors()))
         scored = ((self.get_cost(x, mod=mod), x) for x in candidates)
         return min(scored, key=itemgetter(0))[1]
 
@@ -329,21 +321,6 @@ def posterize(
         raise ValueError(msg)
 
     target = TargetImage(image_path, bite_size)
-    # vectors = target.clusters.members.vectors
-    # new_ixs = target.clusters.ixs
-    # new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
-    # new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
-    # new_ixs = [x for x in new_ixs if rgb_to_hsv(vectors[x])[1] > 70]
-    # rgb = (103, 66, 30)
-    # rgbs = [tuple(vectors[x]) for x in new_ixs]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (0, 0, 0)) > 10]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (152, 138, 108)) > 10]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (153, 143, 116)) > 10]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (195, 195, 182)) > 10]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (193, 143, 99)) > 10]
-    # new_ixs = [x for x in new_ixs if get_delta_e(vectors[x], (228, 217, 175)) > 10]
-    # target.clusters = target.clusters.copy(inc_members=new_ixs)
-    # breakpoint()
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
@@ -352,7 +329,7 @@ def posterize(
         if ixs:
             target.clusters = target.clusters.copy(inc_members=ixs)
 
-        while len(target.clusters.ixs) > 0:  # until all colors are used
+        while len(target.layers) < (num_cols or 1):
             target.append_layer(target.get_best_candidate(mod=mod_cols))
 
     np.save(cache_path, target.layers)
@@ -682,13 +659,13 @@ def posterize_to_n_colors(
         vs = [tuple(map(int, vectors[x])) for x in new_ixs]
         new_ixs_array = np.array(new_ixs, dtype=np.int32)
         target.clusters = target.clusters.copy(inc_members=new_ixs_array)
-        target = posterize(image_path, 24, ixs, 12, 6, ignore_cache=False)
+        target = posterize(image_path, 9, ixs, 12, 6, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         # _draw_target(target, 18, "input_12")
         break
 
-    target = posterize(image_path, 24, new_ixs, 12, 6, ignore_cache=False)
+    target = posterize(image_path, 9, new_ixs, 12, 6, ignore_cache=False)
 
     kept = np.unique(_merge_layers(*target.layers[:12]))
     vss_2 = [tuple(map(int, vectors[x])) for x in kept]
