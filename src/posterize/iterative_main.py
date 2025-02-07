@@ -89,13 +89,10 @@ def _merge_layers(*layers: _IndexMatrix) -> _IndexMatrix:
         opaque pixels and -1 in transparent
     :return: one (r, c) array with the last non-transparent pixel in each position
     """
-    try:
-        merged = layers[0].copy()
-        for layer in layers[1:]:
-            merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
-        return merged
-    except:
-        breakpoint()
+    merged = layers[0].copy()
+    for layer in layers[1:]:
+        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
+    return merged
 
 
 class TargetImage:
@@ -121,9 +118,6 @@ class TargetImage:
         )
 
         self.pmatrix = self.clusters.members.pmatrix
-        aaa = np.ones(self.pmatrix.shape[0], dtype=int)
-        bbb = np.ones(self.pmatrix.shape[0], dtype=int) * 8 
-        bbb[np.where(np.random.random(size=bbb.shape) > 0.5)] = 9
         self.ws = np.bincount(self.image.flatten(), minlength=self.pmatrix.shape[0])
 
         # initialize cached propertiej
@@ -214,48 +208,129 @@ class TargetImage:
         solid_cost_matrix = self._get_cost_matrix(solid)
         state_cost_matrix = self._get_cost_matrix(*state_layers)
 
-
-
         layer = np.full(self.pmatrix.shape[0], -1)
         layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
-    def append_layer(self, layer: _IndexMatrix) -> None:
+    def append_color(
+        self, palette_index: int, layers: _IndexMatrices | None = None
+    ) -> _IndexMatrices:
+        """Append a color to the current state.
+
+        :param palette_index: the index of the color to use in the new layer
+        :param layers: the current state or a presumed state
+        """
+        if layers is None:
+            layers = self.layers
+
+        new_layer = self.new_candidate_layer(palette_index, layers)
+        return np.append(layers, [new_layer], axis=0)
+
+    def _match_layer_color(self, layer_a: _IndexMatrix, layer_b: _IndexMatrix) -> _IndexMatrix:
+        """Match the color of layer_a to layer_b.
+
+        :param layer_a: (r, c) array with a palette index in opaque pixels and -1 in
+            transparent
+        :param layer_b: (r, c) array with a palette index in opaque pixels and -1 in
+            transparent
+        :return: (r, c) array with the same shape as layer_a where the color of each
+            pixel is matched to the color of the corresponding pixel in layer_b.
+        """
+        color = np.max(layer_b)
+        return np.where(layer_a == -1, -1, color)
+
+    def check_layers(self, layers: _IndexMatrices, num_layers: int | None = None, seen: dict[tuple[int, ...], float] | None = None ) -> _IndexMatrices:
+        """Check that each layer is the same it would be if it were a candidate."""
+        if num_layers is None:
+            num_layers = len(layers)
+
+        if len(layers) == num_layers:
+            if seen is None:
+                seen = {}
+            print(f"checking {num_layers=} {len(seen)=}")
+            for k in sorted(seen.keys()):
+                print(f"        {k} {seen[k]}")
+            key = tuple(int(np.max(x)) for x in layers)
+            if key in seen:
+                best_key = min(seen.items(), key=itemgetter(1))[0]
+                if key == best_key:
+                    return layers
+                layers = layers[:0]
+                for color_idx in key:
+                    layers = self.append_color(color_idx, layers)
+                return layers
+
+            seen[key] = self.get_cost(*layers)[0]
+            print(f"     ++ {key} {seen[key]}")
+
+        for i, layer in enumerate(layers[:-1]):
+            temp_layers = layers.copy()
+            current_color = np.max(layer)
+            temp_layers[i] = self._match_layer_color(layer, layers[i+1])
+            candidate = self.get_best_candidate(temp_layers)
+            candidate_color = np.max(candidate)
+            if candidate_color != current_color:
+                print(f"color mismatch {i=} {len(layers)=}")
+                # print([np.max(x) for x in temp_layers])
+                # print([np.max(x) for x in layers])
+                layers = self.append_color(int(candidate_color), layers[:i])
+                # print([np.max(x) for x in layers])
+                # breakpoint()
+                return self.check_layers(layers, num_layers, seen=seen)
+        if num_layers == len(layers):
+            return layers
+        while len(layers) < num_layers:
+            new_layer = self.get_best_candidate(layers)
+            layers = np.append(layers, [new_layer], axis=0)
+        print("final check")
+        key = tuple(int(np.max(x)) for x in layers)
+        print(key, num_layers)
+        return self.check_layers(layers, seen=seen)
+
+
+
+
+
+            # candidate = self.new_candidate_layer(int(np.max(layer)), layers[:i])
+            # if not np.array_equal(layer, candidate):
+            #     msg = "The layer is not a valid candidate."
+            #     raise ValueError(msg)
+
+
+    def append_layer_to_state(self, layer: _IndexMatrix) -> None:
         """Append a layer to the current state.
 
         param layer: (m, n) array with a palette index in opaque pixels and -1 in
             transparent
         """
-        try:
-            self.layers = np.append(self.layers, [layer], axis=0)
-        except:
-            breakpoint()
-
+        self.layers = np.append(self.layers, [layer], axis=0)
         if len(self.layers) > 2:
-            # remove the oldest layer if there are more than 2
-            layers = self.layers.copy()
-            seen: dict[frozenset[int], float] = {}
-            key = frozenset(int(np.max(x)) for x in layers)
-            print([int(np.max(x)) for x in layers])
-            force_loops = len(layers) - 1
-            print(f"{force_loops=}")
-            force_loop_count = 0
-            while key not in seen or force_loop_count < force_loops:
-                seen[key] = self.get_cost(*layers)[0]
-                layers = np.delete(layers, 0, axis=0)
-                layers[0] = np.ones_like(layers[0]) * np.max(layers[0])
-                layers = np.append(layers, [self.get_best_candidate(layers)], axis=0)
-                key = frozenset(int(np.max(x)) for x in layers)
-                print([int(np.max(x)) for x in layers])
-                if len(key) != len(layers):
-                    msg = "There are duplicate colors in the layers."
-                    raise RuntimeError(msg)
-                force_loop_count += 1
-                if key not in seen:
-                    print(f"new_key {key}")
-                    force_loop_count = 0
-            self.layers = layers
+            self.layers = self.check_layers(self.layers)
 
+        # if len(self.layers) > 2:
+        #     # remove the oldest layer if there are more than 2
+        #     layers = self.layers.copy()
+        #     seen: dict[frozenset[int], float] = {}
+        #     key = frozenset(int(np.max(x)) for x in layers)
+        #     print([int(np.max(x)) for x in layers])
+        #     force_loops = len(layers) - 1
+        #     print(f"{force_loops=}")
+        #     force_loop_count = 0
+        #     while key not in seen or force_loop_count < force_loops:
+        #         seen[key] = self.get_cost(*layers)[0]
+        #         layers = np.delete(layers, 0, axis=0)
+        #         layers[0] = np.ones_like(layers[0]) * np.max(layers[0])
+        #         layers = np.append(layers, [self.get_best_candidate(layers)], axis=0)
+        #         key = frozenset(int(np.max(x)) for x in layers)
+        #         print([int(np.max(x)) for x in layers])
+        #         if len(key) != len(layers):
+        #             msg = "There are duplicate colors in the layers."
+        #             raise RuntimeError(msg)
+        #         force_loop_count += 1
+        #         if key not in seen:
+        #             print(f"new_key {key}")
+        #             force_loop_count = 0
+        #     self.layers = layers
 
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
@@ -316,7 +391,7 @@ def _draw_target(
     big_layers = np.full(layers_shape, -1, dtype=int)
     for i, layer in enumerate(big_layers):
         target_val = np.max(target.layers[i])
-        few_vals = _merge_layers(*target.layers[:i + 1])
+        few_vals = _merge_layers(*target.layers[: i + 1])
         layer[:] = few_vals[target.image]
         layer[np.where(layer != target_val)] = -1
 
@@ -381,8 +456,10 @@ def posterize(
         # if ixs:
         #     target.clusters = target.clusters.copy(inc_members=ixs)
 
-        while len(target.layers) < (num_cols or 1) and len(target.layers) < len(target.get_colors()):
-            target.append_layer(target.get_best_candidate())
+        while len(target.layers) < (num_cols or 1) and len(target.layers) < len(
+            target.get_colors()
+        ):
+            target.append_layer_to_state(target.get_best_candidate())
 
     np.save(cache_path, target.layers)
 
@@ -402,8 +479,6 @@ def _compress_to_n_colors(
     target: TargetImage, net_cols: int, gross_cols: int | None = None
 ):
     state_at_n = _merge_layers(*target.layers[:gross_cols])
-
-
 
 
 def _purify_color(rgb: RgbLike) -> tuple[float, float, float]:
@@ -556,7 +631,7 @@ def posterize_to_n_colors(
         target = TargetImage(image_path, bite_size)
         vectors = target.clusters.members.vectors
 
-        # strip away whites 
+        # strip away whites
         # new_ixs = target.clusters.ixs
         # new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
         # new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
@@ -565,10 +640,11 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 1, ixs, 4, ignore_cache=False)
+        target = posterize(image_path, 1, ixs, 24, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         _draw_target(target, 16, "input_16")
+        _draw_target(target, 24, "input_24")
         # _draw_target(target, 18, "input_12")
         break
 
