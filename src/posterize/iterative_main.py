@@ -213,18 +213,19 @@ class TargetImage:
         return layer
 
     def append_color(
-        self, palette_index: int, layers: _IndexMatrices | None = None
+        self, layers: _IndexMatrices, *palette_indices: int
     ) -> _IndexMatrices:
         """Append a color to the current state.
 
-        :param palette_index: the index of the color to use in the new layer
         :param layers: the current state or a presumed state
+        :param palette_indices: the index of the color to use in the new layer.
+            Multiple args allowed.
         """
-        if layers is None:
-            layers = self.layers
-
-        new_layer = self.new_candidate_layer(palette_index, layers)
-        return np.append(layers, [new_layer], axis=0)
+        if not palette_indices:
+            return layers
+        new_layer = self.new_candidate_layer(palette_indices[0], layers)
+        layers = np.append(layers, [new_layer], axis=0)
+        return self.append_color(layers, *palette_indices[1:])
 
     def _match_layer_color(
         self, layer_a: _IndexMatrix, layer_b: _IndexMatrix
@@ -286,8 +287,7 @@ class TargetImage:
                 if key == best_key:
                     return layers
                 layers = layers[:0]
-                for color_idx in key:
-                    layers = self.append_color(color_idx, layers)
+                layers = self.append_color(layers, *key)
                 return layers
 
             seen[key] = self.get_cost(*layers)[0]
@@ -297,7 +297,7 @@ class TargetImage:
             new_color, delta_e = self.find_layer_substitute(layers, i)
             if delta_e > 0:
                 print(f"color mismatch {i=} {len(layers)=}")
-                layers = self.append_color(new_color, layers[:i])
+                layers = self.append_color(layers[:i], new_color)
                 return self.check_layers(layers, num_layers, seen=seen)
 
         # this will only be true if no substitutes were found
@@ -309,7 +309,6 @@ class TargetImage:
             layers = np.append(layers, [new_layer], axis=0)
 
         return self.check_layers(layers, seen=seen)
-
 
     def append_layer_to_state(self, layer: _IndexMatrix) -> None:
         """Append a layer to the current state.
