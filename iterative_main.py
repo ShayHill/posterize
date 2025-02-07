@@ -111,8 +111,6 @@ class TargetImage:
             cluster is vibrant, max error will be limited to bite_size. If the
             cluster is not vibrant, average error will be limited to bite_size.
         """
-        TIME = time.time()
-
         self._path = path
         self._bite_size = 9 if bite_size is None else bite_size
 
@@ -216,28 +214,6 @@ class TargetImage:
         layer[np.where(self.state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
-    def _split_to_exclude_vibrant(self, palette_index: int):
-        """Exclude vibrant colors from a cluster.
-
-        Split clusters until the cluster containing palette_index does not contain
-        any vibrant outliers. This protects vibrant colors from disappearing into
-        less-vibrant clusters.
-        """
-        if palette_index in self.vibrant_colors:
-            return
-
-        pmatrix = self.clusters.members.pmatrix
-        while True:
-            cluster_ix = self.clusters.find_member(palette_index)
-            cluster = self.clusters.clusters[cluster_ix]
-            vibrant_in_cluster = list(self.vibrant_colors & set(cluster.ixs))
-            if not vibrant_in_cluster:
-                break
-            vibrant_in_cluster_proximities = pmatrix[palette_index, vibrant_in_cluster]
-            if max(vibrant_in_cluster_proximities) < self._bite_size:
-                break
-            self.clusters.split()
-
     def append_layer(self, layer: _IndexMatrix) -> None:
         """Append a layer to the current state.
 
@@ -250,32 +226,8 @@ class TargetImage:
         assert layer_color != -1
 
         self.clusters.set_max_avg_error(self._bite_size)
-        self._split_to_exclude_vibrant(layer_color)
         self.clusters = self.clusters.copy(exc_member_clusters=[layer_color])
         # print(f"####### {len(self.clusters.ixs)} members remain")
-
-    @functools.cached_property
-    def vibrant_colors(self) -> set[int]:
-        """Get the vibrant colors in the image.
-
-        :return: a set of palette indices that are considered vibrant
-
-        These colors cannot be removed from `self._clusters.ixs` unless they are
-        within `bite_size` of the cluster centroid. This prevents vibrant outliers
-        from disappearing into less-vibrant clusters.
-
-        Will take the 10% most vibrant colors in the image, but will exclude colors
-        with vibrance < 64. This is to prevent muddy colors from being considered
-        vibrant just because an image is mostly grayscale.
-        """
-        vectors = self.clusters.members.vectors
-        v_max = cast(npt.NDArray[np.float64], np.max(vectors, axis=1))
-        v_min = cast(npt.NDArray[np.float64], np.min(vectors, axis=1))
-        v_vib = v_max - v_min
-        threshold = max(float(np.percentile(v_vib, 90)), 64)
-        vibrant = np.where(v_vib >= threshold)[0]
-        # print(f"vibrant colors: {len(vibrant)}")
-        return set(map(int, vibrant))
 
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
@@ -755,7 +707,6 @@ def posterize_to_n_colors(
 
     dist = target.get_distribution(palette)
     vss2 = [tuple(map(int, vectors[x])) for x in palette]
-    breakpoint()
     color_blocks = sliver_color_blocks(vectors[palette], list(map(float, dist)))
     output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
 
