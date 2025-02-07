@@ -404,19 +404,6 @@ def _compress_to_n_colors(
     state_at_n = _merge_layers(*target.layers[:gross_cols])
 
 
-class Mood(str, enum.Enum):
-    """Mood of the image."""
-
-    VIBRANT = "vibrant"
-    MUTED = "muted"
-    DEEP = "deep"
-    MARSS = "marss"
-    NEUTRAL = "neutral"
-
-    COLORFUL = "colorful"
-    CONTRAST = "contrast"
-    THRIFTY = "thrifty"
-    FAITHFUL = "faithful"
 
 
 def _purify_color(rgb: RgbLike) -> tuple[float, float, float]:
@@ -536,139 +523,6 @@ def _get_radial_distance(rgb_a: RgbLike, rgb_b: RgbLike) -> float:
     return min(abs(hue_a - hue_b), 360 - abs(hue_a - hue_b))
 
 
-def _qtfy_colorful(rgb: RgbLike) -> float:
-    mute = _qtfy_mute(rgb)
-    vibrant = _qtfy_vibrant(rgb)
-    marss = _qtfy_marss(rgb)
-    return max(mute, vibrant, marss)
-
-
-def _get_palette_color_cost(
-    members: Members,
-    palette: list[int | None],
-    mood: Mood,
-    idxs: Iterable[int],
-):
-    idxs = sorted(idxs)
-    choices = [(r, g, b) for r, g, b in (members.vectors[x] for x in idxs)]
-    if mood == Mood.VIBRANT:
-        choice = max(choices, key=_qtfy_vibrant)
-        return idxs[choices.index(choice)]
-    if mood == Mood.DEEP:
-        choice = max(choices, key=_qtfy_deep)
-        return idxs[choices.index(choice)]
-    if mood == Mood.MARSS:
-        choice = max(choices, key=_qtfy_marss)
-        return idxs[choices.index(choice)]
-    if mood == Mood.MUTED:
-        choice = max(choices, key=_qtfy_mute)
-        return idxs[choices.index(choice)]
-    if mood == Mood.NEUTRAL:
-        choice = max(choices, key=_qtfy_neutral)
-        return idxs[choices.index(choice)]
-
-    if mood == Mood.CONTRAST:
-        choice = min(choices, key=_qtfy_vibrant)
-        return idxs[choices.index(choice)]
-
-    if mood == Mood.COLORFUL:
-        choice = min(choices, key=_qtfy_vibrant)
-        return idxs[choices.index(choice)]
-
-    else:
-        msg = f"mood {mood} not implemented"
-        raise NotImplementedError(msg)
-
-
-def _separate_colors(layers: list[npt.NDArray[np.int32]]) -> list[set[int]]:
-    """Group colors by layer in which they are most common.
-
-    :param layers:
-
-    Nothing will blow up if some of the color sets end up empty. Downstream of this,
-    all colors are searched with no layer color is found.
-    """
-    all_cols: set[int] = set().union(*(np.unique(x) for x in layers))
-    cols_per_layer: list[set[int]] = [set() for _ in range(len(layers))]
-    for color in all_cols:
-        counts = [np.sum(layer == color) for layer in layers]
-        cols_per_layer[counts.index(max(counts))].add(color)
-    return cols_per_layer
-
-
-def _elect_palette(*palettes: list[int]) -> list[int | None]:
-    """Assign a value to each palette index if it represents a majority.
-
-    :param palettes: lists of palette indices
-    :return: list of palette indices
-    """
-    elected: list[int | None] = []
-    majority = len(palettes) // 2 + 1
-    for channel in zip(*palettes):
-        values = {x for x in channel if x is not None}
-        winner = max(values, key=lambda x: channel.count(x))
-        if channel.count(winner) >= majority:
-            elected.append(winner)
-        else:
-            elected.append(None)
-    return elected
-
-
-def _select_vibrant(
-    vectors: npt.NDArray[np.float64], cols: set[int], min_required: int
-) -> set[int]:
-    """Select the most vibrant colors.
-
-    :return: a set of palette indices that are considered vibrant
-
-    These colors cannot be removed from `self._clusters.ixs` unless they are
-    within `bite_size` of the cluster centroid. This prevents vibrant outliers
-    from disappearing into less-vibrant clusters.
-
-    Will take the 10% most vibrant colors in the image, but will exclude colors
-    with vibrance < 64. This is to prevent muddy colors from being considered
-    vibrant just because an image is mostly grayscale.
-    """
-    scored = [(_qtfy_vibrant(vectors[x]), x) for x in cols]
-    median = np.median([s for s, _ in scored])
-    vibrant = {x for s, x in scored if s >= median}
-    if len(vibrant) < min_required:
-        return set([x for _, x in sorted(scored)][-min_required:])
-    return vibrant
-
-
-def _qtfy_contrast(vectors: _FPArray, col_idxs: tuple[int, ...]) -> float:
-    """Quantify the contrast between colors in a palette.
-
-    :param vectors: (n, 3) array of colors
-    :param col_idxs: indices of colors in the palette
-    :return: contrast between colors in the palette
-    """
-    col_vectors = [vectors[x] for x in col_idxs]
-    return sum(get_delta_e(x, y) for x, y in it.combinations(col_vectors, 2))
-
-
-def _qtfy_hue_contrast(vectors: _FPArray, col_idxs: tuple[int, ...]) -> float:
-    """Quantify the hue contrast between colors in a palette.
-
-    :param vectors: (n, 3) array of colors
-    :param col_idxs: indices of colors in the palette
-    :return: contrast between colors in the palette
-    """
-    col_vectors = [vectors[x] for x in col_idxs]
-    return sum(_get_radial_distance(x, y) for x, y in it.combinations(col_vectors, 2))
-
-
-def _iter_candidates(
-    palette: list[int | None], colors: set[int], num_cols: int
-) -> Iterator[tuple[int, ...]]:
-    """Yield candidate palettes given an incomplete palette and fill colors."""
-    known = tuple(filter(None, palette))
-    for candidate in it.product(colors - set(known), repeat=num_cols - len(known)):
-        if len(set(candidate)) == len(candidate):
-            yield known + candidate
-
-
 def _get_subset_weights(members: Members, ixs: _IndexVectorLike) -> list[float]:
     """Get the cumulative weight of vectors at index and their nearest neighbors."""
     ixs = sorted(ixs)
@@ -691,13 +545,12 @@ def posterize_to_n_colors(
     ixs: _IndexVectorLike,
     bite_size: float,
     num_cols: int,
-    mood: Mood = Mood.FAITHFUL,
     seen: set[tuple[int, ...]] | None = None,
     pick_: list[int | None] | None = None,
     min_dist: float = 16,
 ) -> list[int] | None:
 
-    print(f"{image_path.stem} {mood} {min_dist}")
+    print(f"{image_path.stem} {min_dist}")
     bite_size = 24
     while bite_size >= 0:
         target = TargetImage(image_path, bite_size)
@@ -739,7 +592,7 @@ def posterize_to_n_colors(
     dist = target.get_distribution(palette)
     vss2 = [tuple(map(int, vectors[x])) for x in palette]
     color_blocks = sliver_color_blocks(vectors[palette], list(map(float, dist)))
-    output_name = paths.WORKING / f"{image_path.stem}-{mood}.svg"
+    output_name = paths.WORKING / f"{image_path.stem}.svg"
 
     write_palette(image_path, color_blocks, output_name)
 
@@ -788,40 +641,20 @@ if __name__ == "__main__":
     # for pic in pics:
     #     print(pic)
     for pic in pics:
+
         image_path = paths.PROJECT / f"tests/resources/{pic}"
         if not image_path.exists():
             print(f"skipping {image_path}")
             continue
         print(f"processing {image_path}")
         seen: set[tuple[int, ...]] = set()
-        pos = functools.partial(
-            posterize_to_n_colors,
+        _ = posterize_to_n_colors(
             image_path,
             bite_size=9,
             ixs=(),
             num_cols=6,
             seen=seen,
         )
-
-        cached: dict[Mood, list[int]] = {}
-        for mood in Mood:
-            mood = Mood.CONTRAST
-            print(f"==============={pic} -- {mood}")
-            if mood == Mood.CONTRAST:
-                moods = (Mood.VIBRANT, Mood.MUTED, Mood.MARSS, Mood.DEEP, Mood.NEUTRAL)
-                voters = filter(None, (cached.get(x) for x in moods))
-                pick = _elect_palette(*voters)
-            if mood == Mood.COLORFUL:
-                moods = (Mood.VIBRANT, Mood.MUTED, Mood.MARSS)
-                voters = filter(None, (cached.get(x) for x in moods))
-                pick = _elect_palette(*voters)
-            else:
-                pick = None
-            with suppress(NotImplementedError):
-                palette = pos(mood=mood, pick_=pick)
-                if palette is not None:
-                    cached[mood] = palette
-            break
 
     print("done")
 
