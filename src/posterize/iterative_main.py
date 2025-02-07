@@ -226,7 +226,9 @@ class TargetImage:
         new_layer = self.new_candidate_layer(palette_index, layers)
         return np.append(layers, [new_layer], axis=0)
 
-    def _match_layer_color(self, layer_a: _IndexMatrix, layer_b: _IndexMatrix) -> _IndexMatrix:
+    def _match_layer_color(
+        self, layer_a: _IndexMatrix, layer_b: _IndexMatrix
+    ) -> _IndexMatrix:
         """Match the color of layer_a to layer_b.
 
         :param layer_a: (r, c) array with a palette index in opaque pixels and -1 in
@@ -239,7 +241,35 @@ class TargetImage:
         color = np.max(layer_b)
         return np.where(layer_a == -1, -1, color)
 
-    def check_layers(self, layers: _IndexMatrices, num_layers: int | None = None, seen: dict[tuple[int, ...], float] | None = None ) -> _IndexMatrices:
+    def find_layer_substitute(
+        self, layers: _IndexMatrices, index: int
+    ) -> tuple[int, float]:
+        """Find a substitute color for a layer.
+
+        :param layers: (n, r, c) array with palette indices in opaque pixels and -1 in
+            transparent
+        :param index: the index of the layer to find a substitute for. This can only
+            work if the index is less than len(layers) - 1.
+        :return: the index of the substitute color and the delta E between the
+            substitute and the original color
+        """
+        this_color = max(layers[index])
+        with_layer_hidden = layers.copy()
+        with_layer_hidden[index] = self._match_layer_color(
+            layers[index], layers[index + 1]
+        )
+        candidate = self.get_best_candidate(with_layer_hidden)
+        candidate_color = max(candidate)
+        if this_color == candidate_color:
+            return candidate_color, 0
+        return candidate_color, float(self.pmatrix[this_color, candidate_color])
+
+    def check_layers(
+        self,
+        layers: _IndexMatrices,
+        num_layers: int | None = None,
+        seen: dict[tuple[int, ...], float] | None = None,
+    ) -> _IndexMatrices:
         """Check that each layer is the same it would be if it were a candidate."""
         if num_layers is None:
             num_layers = len(layers)
@@ -263,38 +293,22 @@ class TargetImage:
             seen[key] = self.get_cost(*layers)[0]
             print(f"     ++ {key} {seen[key]}")
 
-        for i, layer in enumerate(layers[:-1]):
-            temp_layers = layers.copy()
-            current_color = np.max(layer)
-            temp_layers[i] = self._match_layer_color(layer, layers[i+1])
-            candidate = self.get_best_candidate(temp_layers)
-            candidate_color = np.max(candidate)
-            if candidate_color != current_color:
+        for i, _ in enumerate(layers[:-1]):
+            new_color, delta_e = self.find_layer_substitute(layers, i)
+            if delta_e > 0:
                 print(f"color mismatch {i=} {len(layers)=}")
-                # print([np.max(x) for x in temp_layers])
-                # print([np.max(x) for x in layers])
-                layers = self.append_color(int(candidate_color), layers[:i])
-                # print([np.max(x) for x in layers])
-                # breakpoint()
+                layers = self.append_color(new_color, layers[:i])
                 return self.check_layers(layers, num_layers, seen=seen)
+
+        # this will only be true if no substitutes were found
         if num_layers == len(layers):
             return layers
+
         while len(layers) < num_layers:
             new_layer = self.get_best_candidate(layers)
             layers = np.append(layers, [new_layer], axis=0)
-        print("final check")
-        key = tuple(int(np.max(x)) for x in layers)
-        print(key, num_layers)
+
         return self.check_layers(layers, seen=seen)
-
-
-
-
-
-            # candidate = self.new_candidate_layer(int(np.max(layer)), layers[:i])
-            # if not np.array_equal(layer, candidate):
-            #     msg = "The layer is not a valid candidate."
-            #     raise ValueError(msg)
 
 
     def append_layer_to_state(self, layer: _IndexMatrix) -> None:
