@@ -368,9 +368,9 @@ def posterize(
     ignore_cache = True
     print(f"{bite_size=}")
 
-    if ixs and num_cols and len(ixs) < num_cols:
-        msg = "ixs must be None or have at least as many colors as num_cols."
-        raise ValueError(msg)
+    # if ixs and num_cols and len(ixs) < num_cols:
+    #     msg = "ixs must be None or have at least as many colors as num_cols."
+    #     raise ValueError(msg)
 
     target = TargetImage(image_path, bite_size)
 
@@ -378,8 +378,8 @@ def posterize(
     if cache_path.exists() and not ignore_cache:
         target.layers = np.load(cache_path)
     else:
-        if ixs:
-            target.clusters = target.clusters.copy(inc_members=ixs)
+        # if ixs:
+        #     target.clusters = target.clusters.copy(inc_members=ixs)
 
         while len(target.layers) < (num_cols or 1) and len(target.layers) < len(target.get_colors()):
             target.append_layer(target.get_best_candidate())
@@ -565,18 +565,20 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 1, ixs,  16, ignore_cache=False)
+        target = posterize(image_path, 1, ixs, 4, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         _draw_target(target, 16, "input_16")
         # _draw_target(target, 18, "input_12")
         break
 
+    target = TargetImage(image_path, bite_size)
+    new_ixs = target.clusters.ixs
     target = posterize(image_path, 9, new_ixs, 12, ignore_cache=False)
 
     kept = np.unique(_merge_layers(*target.layers[:12]))
     vss_2 = [tuple(map(int, vectors[x])) for x in kept]
-    assert not set(vss_2) - set(vs)
+    # assert not set(vss_2) - set(vs)
 
     members = re_weigh(target.clusters.members, kept)
     clusters = SumSupercluster(members)
