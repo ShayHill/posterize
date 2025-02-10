@@ -4,35 +4,26 @@
 :created: 2024-10-13
 """
 
-import functools
-import logging
 import subprocess
-from operator import itemgetter
 from pathlib import Path
-from tempfile import TemporaryFile
-from typing import Annotated, TypeAlias, TypeVar, cast
+from typing import Annotated, TypeAlias, Any
 import os
-from posterize.quantization import resample_image
 
 from basic_colormath import float_tuple_to_8bit_int_tuple
 import numpy as np
-from basic_colormath import floats_to_uint8
-from cluster_colors.cluster_supercluster import SuperclusterBase
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
 from PIL import Image
-from PIL.Image import Image as ImageType
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 from posterize.paths import CACHE_DIR
 
 from posterize import paths
-from posterize.quantization import new_supercluster_with_quantized_image
 
-_PixelVector: TypeAlias = Annotated[npt.NDArray[np.float32], "(r,3)"]
-_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int32], "(r,c)"]
-_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.int32], "(n,r,c)"]
+_PixelVector: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(r,3)"]
+_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(r,c)"]
+_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,r,c)"]
 
 _TMP_BMP = CACHE_DIR / "temp.bmp"
 
