@@ -675,7 +675,7 @@ def posterize_to_n_colors(
     clusters.set_n(6)
     palette = [x.centroid for x in clusters.clusters]
     # palette = [kept[x] for x in palette]
-    # target = posterize(image_path, 0, palette, ignore_cache=True)
+    # target = posterize(image_path, 0, paletteE ignore_cache=True)
     # _draw_target(target, 6, "input_selected")
 
     vectors = members.vectors
