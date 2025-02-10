@@ -117,13 +117,17 @@ class TargetImage:
             Supercluster, path
         )
 
-        self.pmatrix = self.clusters.members.pmatrix
         self.ws = np.bincount(self.image.flatten(), minlength=self.pmatrix.shape[0])
 
         # initialize cached propertiej
         self._layers = np.empty((0, self.pmatrix.shape[0]), dtype=int)
         self.state = np.ones_like(self.image) * -1
         self.state_cost_matrix = np.ones_like(self.image) * np.inf
+
+    @property
+    def pmatrix(self) -> _FPArray:
+        """Shorthand for self.clusters.members.pmatrix."""
+        return self.clusters.members.pmatrix
 
     @property
     def layers(self) -> _IndexMatrices:
@@ -142,8 +146,7 @@ class TargetImage:
 
     def get_distribution(self, indices: _IndexVectorLike) -> npt.NDArray[np.intp]:
         """Count the pixels best approximated by each palette index."""
-        pmatrix = self.clusters.members.pmatrix
-        select_cols = pmatrix[:, indices]
+        select_cols = self.pmatrix[:, indices]
         closest_per_color = np.argmin(select_cols, axis=1)
         image_approx = closest_per_color[self.image]
         return np.bincount(image_approx.flatten(), minlength=len(indices))
@@ -163,7 +166,7 @@ class TargetImage:
             msg = "There are still transparent pixels in the state."
             raise ValueError(msg)
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
-        return self.clusters.members.pmatrix[image, state] * self.ws
+        return self.pmatrix[image, state] * self.ws
 
     def get_cost(self, *layers: _IndexMatrix) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
@@ -369,7 +372,7 @@ class TargetImage:
             available_colors = [
                 x
                 for x in available_colors
-                if np.min(self.clusters.members.pmatrix[x, used]) > self._bite_size
+                if np.min(self.pmatrix[x, used]) > self._bite_size
             ]
         get_cand = functools.partial(
             self.new_candidate_layer, state_layers=state_layers
