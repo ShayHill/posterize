@@ -396,6 +396,21 @@ def pick_nearest_color(
     return min(colors, key=lambda x: get_delta_e(rgb, colormap[x]))
 
 
+def _expand_layers(
+    quantized_image: Annotated[_IndexMatrix, "(r, c)"],
+    d1_layers: Annotated[_IndexMatrices, "(n, 512)"],
+    ) -> Annotated[_IndexMatrices, "(n, r, c)"]:
+    """Expand layers to the size of the quantized image.
+
+    :param quantized_image: (r, c) array with palette indices
+    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
+        palette index in [0, 511].
+    :return: (n, r, c) array of layers, each layer with the same shape as the
+        quantized image.
+    """
+    return np.array([x[quantized_image] for x in d1_layers]) 
+
+
 def _draw_target(
     target: TargetImage, num_cols: int | None = None, stem: str = ""
 ) -> None:
@@ -408,14 +423,7 @@ def _draw_target(
     stem_parts = (target.cache_stem, len(target.layers), num_cols, stem)
     output_stem = "-".join(_stemize(*stem_parts))
 
-    layers_shape = target.layers.shape[:1] + target.image.shape
-    big_layers = np.full(layers_shape, -1, dtype=int)
-    for i, layer in enumerate(big_layers):
-        target_val = np.max(target.layers[i])
-        few_vals = _merge_layers(*target.layers[: i + 1])
-        layer[:] = few_vals[target.image]
-        layer[np.where(layer != target_val)] = -1
-
+    big_layers = _expand_layers(target.image, target.layers)
     draw_posterized_image(vectors, big_layers[:num_cols], output_stem)
 
 
@@ -661,7 +669,7 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 1, ixs, 24, ignore_cache=False)
+        target = posterize(image_path, 1, ixs, 16, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         _draw_target(target, 16, "input_16")
