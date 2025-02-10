@@ -363,9 +363,14 @@ class TargetImage:
         """
         if state_layers is None:
             state_layers = self.layers
-        used = set(np.unique(state_layers))
-        available_colors = [x for x in self.get_colors() if x not in used]
-
+        available_colors = self.get_colors()
+        used = tuple(np.unique(state_layers))
+        if used:
+            available_colors = [
+                x
+                for x in available_colors
+                if np.min(self.clusters.members.pmatrix[x, used]) > self._bite_size
+            ]
         get_cand = functools.partial(
             self.new_candidate_layer, state_layers=state_layers
         )
