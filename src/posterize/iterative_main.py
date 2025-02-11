@@ -21,7 +21,14 @@ from palette_image.svg_display import write_palette
 from palette_image.color_block_ops import sliver_color_blocks
 
 import numpy as np
-from basic_colormath import get_delta_e, rgb_to_hsv, hsv_to_rgb, get_delta_e_lab
+from basic_colormath import (
+    get_delta_e,
+    rgb_to_hsv,
+    hsv_to_rgb,
+    get_delta_e_lab,
+    get_deltas_e,
+    rgbs_to_hsv,
+)
 from cluster_colors import SuperclusterBase, Members
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
@@ -30,7 +37,7 @@ from posterize import paths
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 logging.basicConfig(level=logging.INFO)
 
@@ -52,7 +59,7 @@ HslLike = tuple[float, float, float] | Iterable[float]
 LabLike = tuple[float, float, float] | Iterable[float]
 
 # the maximum delta E between two colors in the Lab color space. I'm not sure this
-# value is even possible in RGB colorspace, but it should work as a maximum quantify
+# value is even possible in RGB colorspace, but it should work as a maximum for
 # functions that are calculated by returning _MAX_DELTA_E - get_anti_value(). Many
 # values are easier to quantify as distance from a desireable value, where less
 # should be "better".
@@ -61,10 +68,83 @@ _MAX_DELTA_E = get_delta_e_lab((0, 127, 127), (100, -128, -128))
 WHITE = (255, 255, 255)
 
 
+def build_proximity_matrix(
+    colors: npt.ArrayLike,
+    func: Callable[[npt.ArrayLike, npt.ArrayLike], npt.NDArray[np.floating[Any]]],
+) -> npt.NDArray[np.floating[Any]]:
+    """Build a proximity matrix from a list of colors.
+
+    :param colors: an array (n, d) of Lab or rgb colors
+    :param func: a commutative function that calculates the proximity of two colors.
+        It is assumed that identical colors have a proximity of 0.
+    :return: an array (n, n) of proximity values between every pair of colors
+
+    The proximity matrix is symmetric.
+    """
+    colors = np.asarray(colors)
+    n = len(colors)
+    rows = np.repeat(colors[:, np.newaxis, :], n, axis=1)
+    cols = np.repeat(colors[np.newaxis, :, :], n, axis=0)
+    proximity_matrix = np.zeros((n, n))
+    ut = np.triu_indices(n, k=1)
+    lt = (ut[1], ut[0])
+    proximity_matrix[ut] = func(cols[ut], rows[ut])
+    proximity_matrix[lt] = proximity_matrix[ut]
+    return proximity_matrix
+
+
+def circular_pairwise_distances(arr1, arr2):
+    """
+    Computes the circular pairwise distances between two arrays of angles in [0, 360).
+    
+    Parameters:
+        arr1 (numpy.ndarray): A 1D array of angles in degrees.
+        arr2 (numpy.ndarray): A 1D array of angles in degrees.
+        
+    Returns:
+        numpy.ndarray: A 2D array where element (i, j) is the circular distance 
+                       between arr1[i] and arr2[j].
+    """
+    # Ensure the arrays are NumPy arrays
+    arr1 = np.asarray(arr1)
+    arr2 = np.asarray(arr2)
+    
+    # Compute pairwise differences using broadcasting
+    diff = np.abs(arr1 - arr2)
+    
+    # Adjust for circular distances
+    circular_distances = np.minimum(diff, 360 - diff)
+    
+    return circular_distances
+
+
+def vibrance_weighted_delta_e(color_a: RgbLike, color_b: RgbLike) -> float:
+    """Get the delta E between two colors weighted by their vibrance.
+
+    :param color_a: (r, g, b) color
+    :param color_b: (r, g, b) color
+    :return: delta E between color_a and color_b weighted by their vibrance
+
+    The vibrance of a color is the distance between the color and a pure version of
+    the color. The delta E is then multiplied by the vibrance of both colors.
+    """
+    color_a = np.asarray(color_a)
+    color_b = np.asarray(color_b)
+    deltas_e = get_deltas_e(color_a, color_b)
+    vibrancies_a = np.max(color_a, axis=1) - np.min(color_a, axis=1)
+    vibrancies_b = np.max(color_b, axis=1) - np.min(color_b, axis=1)
+    hsvs_a = rgbs_to_hsv(color_a)
+    hsvs_b = rgbs_to_hsv(color_b)
+    h_deltas = circular_pairwise_distances(hsvs_a[:, 0], hsvs_b[:, 0])
+    return deltas_e * np.min([vibrancies_a, vibrancies_b], axis=0) * h_deltas
+    
+
+
+
 class SumSupercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
-    quality_metric = "sum_error"
+    quality_metric = "max_error"
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
@@ -128,6 +208,10 @@ class TargetImage:
     def pmatrix(self) -> _FPArray:
         """Shorthand for self.clusters.members.pmatrix."""
         return self.clusters.members.pmatrix
+
+    def get_state_weight(self, idx: int) -> float:
+        """Get the weight of a color index in the current state."""
+        return float(np.sum(self.ws[self.state == idx]))
 
     @property
     def layers(self) -> _IndexMatrices:
@@ -399,7 +483,7 @@ def pick_nearest_color(
 def _expand_layers(
     quantized_image: Annotated[_IndexMatrix, "(r, c)"],
     d1_layers: Annotated[_IndexMatrices, "(n, 512)"],
-    ) -> Annotated[_IndexMatrices, "(n, r, c)"]:
+) -> Annotated[_IndexMatrices, "(n, r, c)"]:
     """Expand layers to the size of the quantized image.
 
     :param quantized_image: (r, c) array with palette indices
@@ -408,7 +492,7 @@ def _expand_layers(
     :return: (n, r, c) array of layers, each layer with the same shape as the
         quantized image.
     """
-    return np.array([x[quantized_image] for x in d1_layers]) 
+    return np.array([x[quantized_image] for x in d1_layers])
 
 
 def _draw_target(
@@ -644,6 +728,17 @@ def re_weigh(members: Members, ixs: _IndexVectorLike) -> Members:
     return Members(subset_vectors, weights=subset_weights, pmatrix=subset_pmatrix)
 
 
+def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0) -> Supercluster:
+    """Try to extract a cluster with a dominant color."""
+    full_weight = sum(x.weight for x in supercluster.clusters)
+    supercluster.set_n(2)
+    heaviest = max(supercluster.clusters, key=lambda x: x.weight)
+    if heaviest.weight / full_weight > 1 / 2 and len(heaviest.ixs) >= min_members:
+        supercluster = supercluster.copy(inc_members=heaviest.ixs)
+        return _get_dominant(supercluster, min_members)
+    return supercluster
+
+
 def posterize_to_n_colors(
     image_path: Path,
     ixs: _IndexVectorLike,
@@ -659,6 +754,7 @@ def posterize_to_n_colors(
     while bite_size >= 0:
         target = TargetImage(image_path, bite_size)
         vectors = target.clusters.members.vectors
+        # break
 
         # strip away whites
         # new_ixs = target.clusters.ixs
@@ -669,7 +765,7 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 1, ixs, 16, ignore_cache=False)
+        target = posterize(image_path, 12, ixs, 16, ignore_cache=False)
         _draw_target(target, 6, "input_06")
         _draw_target(target, 12, "input_12")
         _draw_target(target, 16, "input_16")
@@ -678,27 +774,121 @@ def posterize_to_n_colors(
         break
 
     target = TargetImage(image_path, bite_size)
-    new_ixs = target.clusters.ixs
-    target = posterize(image_path, 9, new_ixs, 12, ignore_cache=False)
+    target = posterize(image_path, 12, None, 16, ignore_cache=False)
 
-    kept = np.unique(_merge_layers(*target.layers[:12]))
-    vss_2 = [tuple(map(int, vectors[x])) for x in kept]
-    # assert not set(vss_2) - set(vs)
+    colors = [int(max(x)) for x in target._layers]
+    vectors = target.clusters.members.vectors[colors]
+    pmatrix = build_proximity_matrix(vectors, vibrance_weighted_delta_e)
+    weights = [
+        target.get_state_weight(x) * (max(y) - min(y))
+        for x, y in zip(colors, vectors, strict=True)
+    ]
+    members = Members(vectors, weights=weights, pmatrix=pmatrix)
+    supercluster = Supercluster(members)
 
-    members = re_weigh(target.clusters.members, kept)
-    clusters = SumSupercluster(members)
+    heaviest = _get_dominant(supercluster, min_members=4)
+    heaviest.set_n(4)
+    aaa = heaviest.get_as_vectors()
+    
+    palette = [x.centroid for x in heaviest.clusters]
 
-    clusters.set_n(6)
-    palette = [x.centroid for x in clusters.clusters]
-    # palette = [kept[x] for x in palette]
-    # target = posterize(image_path, 0, paletteE ignore_cache=True)
-    # _draw_target(target, 6, "input_selected")
 
-    vectors = members.vectors
 
-    dist = target.get_distribution(palette)
-    vss2 = [tuple(map(int, vectors[x])) for x in palette]
-    color_blocks = sliver_color_blocks(vectors[palette], list(map(float, dist)))
+    def get_contrast(palette_: list[int], color: int) -> float:
+        if color in palette_:
+            return 0
+        rgb = supercluster.members.vectors[color]
+        rgbs = supercluster.members.vectors[palette_]
+        hsv = rgb_to_hsv(rgb)
+        hsvs = rgbs_to_hsv(rgbs)
+        vib = max(rgb) - min(rgb)
+        vibs = [max(x) - min(x) for x in rgbs]
+        hsp = [x[0] for x in hsvs]
+        hsc = [hsv[0]] * len(hsp)
+        deltas_h = circular_pairwise_distances(hsc, hsp) * vibs
+        deltas_e = supercluster.members.pmatrix[color, palette_]
+        scaled = deltas_e * deltas_h
+        return np.mean(scaled) * vib
+
+        # vibs = [max(x) - min(x) for x in rgbs]
+
+        # return np.mean(supercluster.members.pmatrix[color, palette_]) * (max(rgb) - min(rgb))
+
+
+    while len(palette) < 6:
+        free_cols = supercluster.ixs
+        next_color = max(free_cols, key=lambda x: get_contrast(palette, x))
+        palette.append(next_color)
+        # tails = it.combinations(free_cols, 6 - len(palette))
+        # candidates = [palette + list(map(int, tail)) for tail in tails]
+        # palette = max(candidates, key=lambda x: get_contrast(palette, x))
+
+    
+
+    # supercluster = Supercluster(members)
+    # full_weight = np.sum(members.weights)
+    # supercluster.set_n(len(supercluster.ixs))
+    # while True:
+    #     print(len(supercluster.clusters))
+    #     if len(supercluster.clusters) <= 3:
+    #         print("too few clusters")
+    #         break
+    #     heaviest = max(supercluster.clusters, key=lambda x: x.weight)
+    #     if heaviest.weight / full_weight > 1 / 2 and len(heaviest.ixs) >= 4:
+    #         print("too heavy")
+    #         break
+    #     supercluster.merge()
+    # # TODO: make some provision for when heaviest hever ends up with at least four
+    # # colors
+
+    # clusters = sorted(supercluster.clusters, key=lambda x: x.weight, reverse=True)
+    # heaviest = supercluster.copy(inc_members=clusters[0].ixs)
+    # heaviest.set_n(4)
+    # palette = [int(x.centroid) for x in heaviest.clusters]
+    # # palette = [tuple(map(int, vectors[x])) for x in heaviest.clusters]
+    # aaa = [supercluster.copy(inc_members=x.ixs) for x in clusters]
+
+    # def get_contrast(palette_: list[int]) -> float:
+    #     return np.mean(pmatrix[np.ix_(palette_, palette_)])
+
+    # def get_contrast(palette_: list[int]) -> float:
+    #     return np.mean(supercluster.members.pmatrix[np.ix_(palette_, palette_)])
+
+    # # while len(palette) < 6:
+    # #     free_cols = supercluster.ixs
+
+    # tails = it.combinations(supercluster.ixs, 6 - len(palette))
+    # candidates = [palette + list(map(int, tail)) for tail in tails]
+    # palette = max(candidates, key=get_contrast)
+    # pvectors = [supercluster.members.vectors[x] for x in palette]
+
+
+    # target = TargetImage(image_path, bite_size)
+    # new_ixs = target.clusters.ixs
+    # target = posterize(image_path, 9, new_ixs, 16, ignore_cache=False)
+
+    # kept = np.unique(_merge_layers(*target.layers[:12]))
+    # vss_2 = [tuple(map(int, vectors[x])) for x in kept]
+    # # assert not set(vss_2) - set(vs)
+
+    # members = re_weigh(target.clusters.members, kept)
+    # supercluster = SumSupercluster(members)
+
+    # supercluster.set_n(6)
+    # palette = [x.centroid for x in supercluster.clusters]
+    # # palette = [kept[x] for x in palette]
+    # # target = posterize(image_path, 0, paletteE ignore_cache=True)
+    # # _draw_target(target, 6, "input_selected")
+
+    # vectors = members.vectors
+
+    # dist = target.get_distribution(palette)
+    # vss2 = [tuple(map(int, vectors[x])) for x in palette]
+
+    dist = [1, 1, 1, 1, 1, 1]
+
+    pvectors = supercluster.members.vectors[palette]
+    color_blocks = sliver_color_blocks(pvectors, list(map(float, dist)))
     output_name = paths.WORKING / f"{image_path.stem}.svg"
 
     write_palette(image_path, color_blocks, output_name)
@@ -743,7 +933,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
