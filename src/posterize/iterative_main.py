@@ -14,17 +14,9 @@ import numpy as np
 from pathlib import Path
 from typing import Annotated, Iterator
 
-from palette_image.svg_display import write_palette
-from palette_image.color_block_ops import sliver_color_blocks
 
 import numpy as np
-from basic_colormath import (
-    rgb_to_hsv,
-    get_delta_e_lab,
-    get_deltas_e,
-    rgbs_to_hsv,
-)
-from cluster_colors import SuperclusterBase, Members
+from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
 
@@ -32,12 +24,9 @@ from posterize import paths
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
-from typing import Any, Callable
+from typing import Any
 
 logging.basicConfig(level=logging.INFO)
-
-
-WHITE = (255, 255, 255)
 
 
 class Supercluster(SuperclusterBase):
@@ -49,15 +38,19 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-# _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
-
-
-def _merge_layers(*layers: npt.NDArray[np.integer[Any]]) -> npt.NDArray[np.integer[Any]]:
+def _merge_layers(
+    *layers: npt.NDArray[np.integer[Any]],
+) -> npt.NDArray[np.integer[Any]]:
     """Merge layers into a single layer.
 
-    :param layers: (r, c) arrays with non-negative integers (palette indices) in
-        opaque pixels and -1 in transparent
-    :return: one (r, c) array with the last non-transparent pixel in each position
+    :param layers: (n, c) array of n layers, each containing a value for each color
+        index. These will all be the same color or -1 for colors that are transparent
+        in each layer.
+    :return: one (c,) array with the last non-transparent color in each position
+
+    Where an image is a (rows, cols) array of indices--usually in (0, 511)--each
+    layer of an approximation will color some of those indices with one palette index
+    per layer, and others with -1 for transparency.
     """
     merged = layers[0].copy()
     for layer in layers[1:]:
@@ -76,9 +69,8 @@ class TargetImage:
         """Initialize a TargetImage.
 
         :param path: path to the image
-        :param bite_size: the max error of the cluster removed for each color. If the
-            cluster is vibrant, max error will be limited to bite_size. If the
-            cluster is not vibrant, average error will be limited to bite_size.
+        :param bite_size: the minimum delta (defines in
+            self.clusters.members.pmatrix) between layer colors.
         """
         self._path = path
         self._bite_size = 9 if bite_size is None else bite_size
@@ -87,21 +79,29 @@ class TargetImage:
             Supercluster, path
         )
 
-        self.ws = np.bincount(self.image.flatten(), minlength=self.pmatrix.shape[0])
-
-        # initialize cached propertiej
+        # initialize cached properties
         self._layers = np.empty((0, self.pmatrix.shape[0]), dtype=int)
         self.state = np.ones_like(self.image) * -1
         self.state_cost_matrix = np.ones_like(self.image) * np.inf
+
+    @property
+    def vectors(self) -> npt.NDArray[np.floating[Any]]:
+        """Shorthand for self.clusters.members.vectors."""
+        return self.clusters.members.vectors
 
     @property
     def pmatrix(self) -> npt.NDArray[np.floating[Any]]:
         """Shorthand for self.clusters.members.pmatrix."""
         return self.clusters.members.pmatrix
 
+    @property
+    def weights(self) -> npt.NDArray[np.floating[Any]]:
+        """Shorthand for self.clusters.members.weights."""
+        return self.clusters.members.weights
+
     def get_state_weight(self, idx: int) -> float:
         """Get the weight of a color index in the current state."""
-        return float(np.sum(self.ws[self.state == idx]))
+        return float(np.sum(self.weights[self.state == idx]))
 
     @property
     def layers(self) -> npt.NDArray[np.integer[Any]]:
@@ -118,8 +118,9 @@ class TargetImage:
         cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
         return f"{self._path.stem}-{cache_bite_size}"
 
-
-    def _get_cost_matrix(self, *layers: npt.NDArray[np.integer[Any]]) -> npt.NDArray[np.floating[Any]]:
+    def _get_cost_matrix(
+        self, *layers: npt.NDArray[np.integer[Any]]
+    ) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -134,7 +135,7 @@ class TargetImage:
             msg = "There are still transparent pixels in the state."
             raise ValueError(msg)
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
-        return self.pmatrix[image, state] * self.ws
+        return self.pmatrix[image, state] * self.weights
 
     def get_cost(self, *layers: npt.NDArray[np.integer[Any]]) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
@@ -199,7 +200,9 @@ class TargetImage:
         return self.append_color(layers, *palette_indices[1:])
 
     def _match_layer_color(
-        self, layer_a: npt.NDArray[np.integer[Any]], layer_b: npt.NDArray[np.integer[Any]]
+        self,
+        layer_a: npt.NDArray[np.integer[Any]],
+        layer_b: npt.NDArray[np.integer[Any]],
     ) -> npt.NDArray[np.integer[Any]]:
         """Match the color of layer_a to layer_b.
 
@@ -249,9 +252,6 @@ class TargetImage:
         if len(layers) == num_layers:
             if seen is None:
                 seen = {}
-            print(f"checking {num_layers=} {len(seen)=}")
-            for k in sorted(seen.keys()):
-                print(f"        {k} {seen[k]}")
             key = tuple(int(np.max(x)) for x in layers)
             if key in seen:
                 best_key = min(seen.items(), key=itemgetter(1))[0]
@@ -275,11 +275,25 @@ class TargetImage:
         if num_layers == len(layers):
             return layers
 
+        layers = self._fill_layers(num_layers, layers=layers)
+
+        return self.check_layers(layers, seen=seen)
+
+    def _fill_layers(
+        self, num_layers: int, layers: npt.NDArray[np.integer[Any]] | None = None
+    ) -> npt.NDArray[np.integer[Any]]:
+        """Add layers (without check_layers) until there are num_layers.
+
+        :param num_layers: the number of layers to add
+        :param layers: the current state or a presumed state
+        :return: layers with num_layers. This does not alter the state.
+        """
+        if layers is None:
+            layers = self.layers
         while len(layers) < num_layers:
             new_layer = self.get_best_candidate(layers)
             layers = np.append(layers, [new_layer], axis=0)
-
-        return self.check_layers(layers, seen=seen)
+        return layers
 
     def append_layer_to_state(self, layer: npt.NDArray[np.integer[Any]]) -> None:
         """Append a layer to the current state.
@@ -291,37 +305,40 @@ class TargetImage:
         if len(self.layers) > 2:
             self.layers = self.check_layers(self.layers)
 
-    def get_colors(self) -> list[int]:
+    def get_colors(
+        self, state_layers: npt.NDArray[np.integer[Any]] | None = None
+    ) -> list[int]:
         """Get the most common colors in the image.
 
         :return: the rough color clusters in the image
         """
-        # self.clusters.set_max_avg_error(self._bite_size)
-        return list(range(self.pmatrix.shape[0]))
-        return [x.centroid for x in self.clusters.clusters]
+        if state_layers is None:
+            state_layers = self.layers
+        if len(state_layers) == 0:
+            return list(map(int, self.clusters.ixs))
+        layer_colors = np.array([np.max(x) for x in state_layers])
+        assert -1 not in layer_colors
+        return [
+            int(x)
+            for x in self.clusters.ixs
+            if min(self.pmatrix[x, layer_colors]) > self._bite_size
+        ]
 
     def get_best_candidate(
         self, state_layers: npt.NDArray[np.integer[Any]] | None = None
     ) -> npt.NDArray[np.integer[Any]]:
-        """Get the best candidate layer.
+        """Get the best candidate layer to add to layers.
 
+        :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
         if state_layers is None:
             state_layers = self.layers
-        available_colors = self.get_colors()
-        used = tuple(np.unique(state_layers))
-        if used:
-            available_colors = [
-                x
-                for x in available_colors
-                if np.min(self.pmatrix[x, used]) > self._bite_size
-            ]
         get_cand = functools.partial(
             self.new_candidate_layer, state_layers=state_layers
         )
-        candidates = tuple(map(get_cand, available_colors))
-        scored = tuple((self.get_cost(*state_layers, x), x) for x in candidates)
+        candidates = map(get_cand, self.get_colors(state_layers))
+        scored = ((self.get_cost(*state_layers, x), x) for x in candidates)
         winner = min(scored, key=itemgetter(0))[1]
         return winner
 
@@ -428,5 +445,3 @@ def posterize(
         )
 
     return target
-
-
