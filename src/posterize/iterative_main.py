@@ -7,24 +7,19 @@ tearing fast_main apart.
 :created: 2025-02-06
 """
 
-import enum
 import functools
 import logging
 from operator import itemgetter
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterable, Iterator, Sequence, TypeAlias
-from contextlib import suppress
-import itertools as it
+from typing import Annotated, Iterator
 
 from palette_image.svg_display import write_palette
 from palette_image.color_block_ops import sliver_color_blocks
 
 import numpy as np
 from basic_colormath import (
-    get_delta_e,
     rgb_to_hsv,
-    hsv_to_rgb,
     get_delta_e_lab,
     get_deltas_e,
     rgbs_to_hsv,
@@ -37,26 +32,12 @@ from posterize import paths
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
 
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable
 
 logging.basicConfig(level=logging.INFO)
 
-# an image-sized array of -1 where transparent and palette indices where opaque
-_IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(r,c)"]
-_IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,r,c)"]
 
-_IndexVector: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,)"]
-_IndexVectorLike: TypeAlias = _IndexVector | Sequence[int]
-_LabArray: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(n,m,3)"]
-_MonoPixelArray: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,m,1)"]
-_ErrorArray: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(n,m,1)"]
-_RGBTuple = tuple[int, int, int]
-_FPArray = npt.NDArray[np.floating[Any]]
 
-RgbLike = tuple[float, float, float] | Iterable[float]
-HsvLike = tuple[float, float, float] | Iterable[float]
-HslLike = tuple[float, float, float] | Iterable[float]
-LabLike = tuple[float, float, float] | Iterable[float]
 
 # the maximum delta E between two colors in the Lab color space. I'm not sure this
 # value is even possible in RGB colorspace, but it should work as a maximum for
@@ -96,29 +77,29 @@ def build_proximity_matrix(
 def circular_pairwise_distances(arr1, arr2):
     """
     Computes the circular pairwise distances between two arrays of angles in [0, 360).
-    
+
     Parameters:
         arr1 (numpy.ndarray): A 1D array of angles in degrees.
         arr2 (numpy.ndarray): A 1D array of angles in degrees.
-        
+
     Returns:
-        numpy.ndarray: A 2D array where element (i, j) is the circular distance 
+        numpy.ndarray: A 2D array where element (i, j) is the circular distance
                        between arr1[i] and arr2[j].
     """
     # Ensure the arrays are NumPy arrays
     arr1 = np.asarray(arr1)
     arr2 = np.asarray(arr2)
-    
+
     # Compute pairwise differences using broadcasting
     diff = np.abs(arr1 - arr2)
-    
+
     # Adjust for circular distances
     circular_distances = np.minimum(diff, 360 - diff)
-    
+
     return circular_distances
 
 
-def vibrance_weighted_delta_e(color_a: RgbLike, color_b: RgbLike) -> float:
+def vibrance_weighted_delta_e(color_a: npt.ArrayLike, color_b: npt.ArrayLike) -> float:
     """Get the delta E between two colors weighted by their vibrance.
 
     :param color_a: (r, g, b) color
@@ -137,7 +118,7 @@ def vibrance_weighted_delta_e(color_a: RgbLike, color_b: RgbLike) -> float:
     hsvs_b = rgbs_to_hsv(color_b)
     h_deltas = circular_pairwise_distances(hsvs_a[:, 0], hsvs_b[:, 0])
     return deltas_e * np.min([vibrancies_a, vibrancies_b], axis=0) * h_deltas
-    
+
 
 
 
@@ -162,7 +143,7 @@ class Supercluster(SuperclusterBase):
 # _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
 
-def _merge_layers(*layers: _IndexMatrix) -> _IndexMatrix:
+def _merge_layers(*layers: npt.NDArray[np.integer[Any]]) -> npt.NDArray[np.integer[Any]]:
     """Merge layers into a single layer.
 
     :param layers: (r, c) arrays with non-negative integers (palette indices) in
@@ -205,7 +186,7 @@ class TargetImage:
         self.state_cost_matrix = np.ones_like(self.image) * np.inf
 
     @property
-    def pmatrix(self) -> _FPArray:
+    def pmatrix(self) -> npt.NDArray[np.floating[Any]]:
         """Shorthand for self.clusters.members.pmatrix."""
         return self.clusters.members.pmatrix
 
@@ -214,11 +195,11 @@ class TargetImage:
         return float(np.sum(self.ws[self.state == idx]))
 
     @property
-    def layers(self) -> _IndexMatrices:
+    def layers(self) -> npt.NDArray[np.integer[Any]]:
         return self._layers
 
     @layers.setter
-    def layers(self, value: _IndexMatrices) -> None:
+    def layers(self, value: npt.NDArray[np.integer[Any]]) -> None:
         self._layers = value
         self.state = _merge_layers(*value)
         self.state_cost_matrix = self._get_cost_matrix(self.state)
@@ -228,14 +209,8 @@ class TargetImage:
         cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
         return f"{self._path.stem}-{cache_bite_size}"
 
-    def get_distribution(self, indices: _IndexVectorLike) -> npt.NDArray[np.intp]:
-        """Count the pixels best approximated by each palette index."""
-        select_cols = self.pmatrix[:, indices]
-        closest_per_color = np.argmin(select_cols, axis=1)
-        image_approx = closest_per_color[self.image]
-        return np.bincount(image_approx.flatten(), minlength=len(indices))
 
-    def _get_cost_matrix(self, *layers: _IndexMatrix) -> _ErrorArray:
+    def _get_cost_matrix(self, *layers: npt.NDArray[np.integer[Any]]) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -252,7 +227,7 @@ class TargetImage:
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
         return self.pmatrix[image, state] * self.ws
 
-    def get_cost(self, *layers: _IndexMatrix) -> tuple[float, float]:
+    def get_cost(self, *layers: npt.NDArray[np.integer[Any]]) -> tuple[float, float]:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -275,8 +250,8 @@ class TargetImage:
         return float(np.sum(self.state_cost_matrix))
 
     def new_candidate_layer(
-        self, palette_index: int, state_layers: _IndexMatrices
-    ) -> _IndexMatrix:
+        self, palette_index: int, state_layers: npt.NDArray[np.integer[Any]]
+    ) -> npt.NDArray[np.integer[Any]]:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -300,8 +275,8 @@ class TargetImage:
         return layer
 
     def append_color(
-        self, layers: _IndexMatrices, *palette_indices: int
-    ) -> _IndexMatrices:
+        self, layers: npt.NDArray[np.integer[Any]], *palette_indices: int
+    ) -> npt.NDArray[np.integer[Any]]:
         """Append a color to the current state.
 
         :param layers: the current state or a presumed state
@@ -315,8 +290,8 @@ class TargetImage:
         return self.append_color(layers, *palette_indices[1:])
 
     def _match_layer_color(
-        self, layer_a: _IndexMatrix, layer_b: _IndexMatrix
-    ) -> _IndexMatrix:
+        self, layer_a: npt.NDArray[np.integer[Any]], layer_b: npt.NDArray[np.integer[Any]]
+    ) -> npt.NDArray[np.integer[Any]]:
         """Match the color of layer_a to layer_b.
 
         :param layer_a: (r, c) array with a palette index in opaque pixels and -1 in
@@ -330,7 +305,7 @@ class TargetImage:
         return np.where(layer_a == -1, -1, color)
 
     def find_layer_substitute(
-        self, layers: _IndexMatrices, index: int
+        self, layers: npt.NDArray[np.integer[Any]], index: int
     ) -> tuple[int, float]:
         """Find a substitute color for a layer.
 
@@ -354,10 +329,10 @@ class TargetImage:
 
     def check_layers(
         self,
-        layers: _IndexMatrices,
+        layers: npt.NDArray[np.integer[Any]],
         num_layers: int | None = None,
         seen: dict[tuple[int, ...], float] | None = None,
-    ) -> _IndexMatrices:
+    ) -> npt.NDArray[np.integer[Any]]:
         """Check that each layer is the same it would be if it were a candidate."""
         if num_layers is None:
             num_layers = len(layers)
@@ -397,7 +372,7 @@ class TargetImage:
 
         return self.check_layers(layers, seen=seen)
 
-    def append_layer_to_state(self, layer: _IndexMatrix) -> None:
+    def append_layer_to_state(self, layer: npt.NDArray[np.integer[Any]]) -> None:
         """Append a layer to the current state.
 
         param layer: (m, n) array with a palette index in opaque pixels and -1 in
@@ -406,31 +381,6 @@ class TargetImage:
         self.layers = np.append(self.layers, [layer], axis=0)
         if len(self.layers) > 2:
             self.layers = self.check_layers(self.layers)
-
-        # if len(self.layers) > 2:
-        #     # remove the oldest layer if there are more than 2
-        #     layers = self.layers.copy()
-        #     seen: dict[frozenset[int], float] = {}
-        #     key = frozenset(int(np.max(x)) for x in layers)
-        #     print([int(np.max(x)) for x in layers])
-        #     force_loops = len(layers) - 1
-        #     print(f"{force_loops=}")
-        #     force_loop_count = 0
-        #     while key not in seen or force_loop_count < force_loops:
-        #         seen[key] = self.get_cost(*layers)[0]
-        #         layers = np.delete(layers, 0, axis=0)
-        #         layers[0] = np.ones_like(layers[0]) * np.max(layers[0])
-        #         layers = np.append(layers, [self.get_best_candidate(layers)], axis=0)
-        #         key = frozenset(int(np.max(x)) for x in layers)
-        #         print([int(np.max(x)) for x in layers])
-        #         if len(key) != len(layers):
-        #             msg = "There are duplicate colors in the layers."
-        #             raise RuntimeError(msg)
-        #         force_loop_count += 1
-        #         if key not in seen:
-        #             print(f"new_key {key}")
-        #             force_loop_count = 0
-        #     self.layers = layers
 
     def get_colors(self) -> list[int]:
         """Get the most common colors in the image.
@@ -442,8 +392,8 @@ class TargetImage:
         return [x.centroid for x in self.clusters.clusters]
 
     def get_best_candidate(
-        self, state_layers: _IndexMatrices | None = None
-    ) -> _IndexMatrix:
+        self, state_layers: npt.NDArray[np.integer[Any]] | None = None
+    ) -> npt.NDArray[np.integer[Any]]:
         """Get the best candidate layer.
 
         :return: the candidate layer with the lowest cost
@@ -467,23 +417,12 @@ class TargetImage:
         return winner
 
 
-def pick_nearest_color(
-    rgb: tuple[float, float, float], colormap: _FPArray, colors: Iterable[int]
-) -> int:
-    """Pick the nearest color in colormap to rgb.
-
-    :param rgb: (r, g, b) tuple
-    :param colormap: (r, 3) array of colors
-    :param colors: indices of colors in colormap to consider
-    :return: index of the nearest color in colormap to rgb
-    """
-    return min(colors, key=lambda x: get_delta_e(rgb, colormap[x]))
 
 
 def _expand_layers(
-    quantized_image: Annotated[_IndexMatrix, "(r, c)"],
-    d1_layers: Annotated[_IndexMatrices, "(n, 512)"],
-) -> Annotated[_IndexMatrices, "(n, r, c)"]:
+    quantized_image: Annotated[npt.NDArray[np.integer[Any]], "(r, c)"],
+    d1_layers: Annotated[npt.NDArray[np.integer[Any]], "(n, 512)"],
+) -> Annotated[npt.NDArray[np.integer[Any]], "(n, r, c)"]:
     """Expand layers to the size of the quantized image.
 
     :param quantized_image: (r, c) array with palette indices
@@ -540,7 +479,7 @@ def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path
 def posterize(
     image_path: Path,
     bite_size: float,
-    ixs: _IndexVectorLike | None = None,
+    ixs: npt.ArrayLike | None = None,
     num_cols: int | None = None,
     *,
     ignore_cache: bool = True,
@@ -555,10 +494,6 @@ def posterize(
     """
     ignore_cache = True
     print(f"{bite_size=}")
-
-    # if ixs and num_cols and len(ixs) < num_cols:
-    #     msg = "ixs must be None or have at least as many colors as num_cols."
-    #     raise ValueError(msg)
 
     target = TargetImage(image_path, bite_size)
 
@@ -588,146 +523,6 @@ def posterize(
     return target
 
 
-def _compress_to_n_colors(
-    target: TargetImage, net_cols: int, gross_cols: int | None = None
-):
-    state_at_n = _merge_layers(*target.layers[:gross_cols])
-
-
-def _purify_color(rgb: RgbLike) -> tuple[float, float, float]:
-    """Purify a color by converting it to HSV and back to RGB.
-
-    :param rgb: (r, g, b) color
-    :return: purified (r, g, b) color
-    """
-    r, g, b = rgb
-    hsv = rgb_to_hsv((r, g, b))
-    hsv = (hsv[0], 100, 100)
-    return hsv_to_rgb(hsv)
-
-
-def _desaturate_color(rgb: npt.NDArray[np.float64]) -> tuple[float, float, float]:
-    """Desaturate a color by multiplying by constants."""
-    r, g, b = rgb
-    gray = _get_brightness(rgb)
-    return gray, gray, gray
-
-
-def _get_dullness(rgb: npt.NDArray[np.float64]) -> float:
-    """Get the vibrance of a color.
-
-    :param rgb: (r, g, b) color
-    :return: vibrance of the color
-    """
-    r, g, b = rgb
-    return get_delta_e((r, g, b), _purify_color(rgb))
-
-
-def _get_brightness(rgb: RgbLike) -> float:
-    """Get the brightness of a color.
-
-    :param rgb: (r, g, b) color
-    :return: brightness of the color
-    """
-    r, g, b = rgb
-    return 0.299 * r + 0.587 * g + 0.114 * b
-
-
-def _match_brightness(rgb: RgbLike, reference: RgbLike) -> tuple[float, float, float]:
-    """Match the brightness of a color to a reference brightness.
-
-    :param rgb: (r, g, b) color
-    :param reference_brightness: brightness to match
-    :return: color with the same brightness as reference_brightness
-    """
-    reference_brightness = _get_brightness(reference)
-    pure_color = _purify_color(rgb)
-
-    now_brightness = _get_brightness(pure_color)
-
-    if now_brightness >= reference_brightness:
-        scale = reference_brightness / now_brightness
-        r, g, b = (x * scale for x in pure_color)
-        return r, g, b
-
-    scale = (reference_brightness - 255) / (now_brightness - 255)
-    r, g, b = (x * scale + 255 * (1 - scale) for x in pure_color)
-    return r, g, b
-
-
-def _qtfy_deep(rgb: RgbLike) -> float:
-    """Quantify the depth of a color."""
-    deep = _match_brightness(rgb, (0, 0, 255))
-    return _MAX_DELTA_E - get_delta_e(rgb, deep)
-
-
-def _qtfy_mute(rgb: RgbLike) -> float:
-    mute = _match_brightness(rgb, (255, 255, 0))
-    return _MAX_DELTA_E - get_delta_e(rgb, mute)
-
-
-def _qtfy_marss(rgb: RgbLike) -> float:
-    marss = _match_brightness(rgb, (0, 140, 140))
-    return _MAX_DELTA_E - get_delta_e(rgb, marss)
-
-
-def _qtfy_vibrant(rgb: RgbLike) -> float:
-    vibrant = _purify_color(rgb)
-    return _MAX_DELTA_E - get_delta_e(rgb, vibrant)
-
-
-def _qtfy_gray(rgb: RgbLike) -> float:
-    gray = _get_brightness(rgb)
-    return _MAX_DELTA_E - get_delta_e(rgb, (gray, gray, gray))
-
-
-def _qtfy_neutral(rgb: RgbLike) -> float:
-    deep = _qtfy_deep(rgb)
-    mute = _qtfy_mute(rgb)
-    gray = _qtfy_gray(rgb)
-    marss = _qtfy_marss(rgb)
-    return max(deep, mute, gray, marss)
-
-
-def _get_saturation(rgb: npt.NDArray[np.float64]) -> float:
-    """Get the saturation of a color.
-
-    :param rgb: (r, g, b) color
-    :return: saturation of the color
-    """
-    r, g, b = rgb
-    return get_delta_e((r, g, b), _desaturate_color(rgb))
-
-
-def _get_radial_distance(rgb_a: RgbLike, rgb_b: RgbLike) -> float:
-    """Get the radial distance between two hues.
-
-    :param hue_a: hue in degrees
-    :param hue_b: hue in degrees
-    :return: radial distance between hue_a and hue_b
-    """
-    hue_a = rgb_to_hsv(rgb_a)[0]
-    hue_b = rgb_to_hsv(rgb_b)[0]
-    return min(abs(hue_a - hue_b), 360 - abs(hue_a - hue_b))
-
-
-def _get_subset_weights(members: Members, ixs: _IndexVectorLike) -> list[float]:
-    """Get the cumulative weight of vectors at index and their nearest neighbors."""
-    ixs = sorted(ixs)
-    subset_cols = members.pmatrix[:, ixs]
-    nearest_per_row = np.argmin(subset_cols, axis=1)
-    nearest_rows_per_idx = (np.where(nearest_per_row == i) for i in range(len(ixs)))
-    return [np.sum(members.weights[x]) for x in nearest_rows_per_idx]
-
-
-def re_weigh(members: Members, ixs: _IndexVectorLike) -> Members:
-    ixs = sorted(ixs)
-    subset_vectors = members.vectors[ixs]
-    subset_weights = _get_subset_weights(members, ixs)
-    subset_pmatrix = members.pmatrix[np.ix_(ixs, ixs)]
-    return Members(subset_vectors, weights=subset_weights, pmatrix=subset_pmatrix)
-
-
 def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0) -> Supercluster:
     """Try to extract a cluster with a dominant color."""
     full_weight = sum(x.weight for x in supercluster.clusters)
@@ -741,7 +536,7 @@ def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0) -> Super
 
 def posterize_to_n_colors(
     image_path: Path,
-    ixs: _IndexVectorLike,
+    ixs: npt.ArrayLike,
     bite_size: float,
     num_cols: int,
     seen: set[tuple[int, ...]] | None = None,
@@ -789,7 +584,7 @@ def posterize_to_n_colors(
     heaviest = _get_dominant(supercluster, min_members=4)
     heaviest.set_n(4)
     aaa = heaviest.get_as_vectors()
-    
+
     palette = [x.centroid for x in heaviest.clusters]
 
 
@@ -810,80 +605,11 @@ def posterize_to_n_colors(
         scaled = deltas_e * deltas_h
         return np.mean(scaled) * vib
 
-        # vibs = [max(x) - min(x) for x in rgbs]
-
-        # return np.mean(supercluster.members.pmatrix[color, palette_]) * (max(rgb) - min(rgb))
-
 
     while len(palette) < 6:
         free_cols = supercluster.ixs
         next_color = max(free_cols, key=lambda x: get_contrast(palette, x))
         palette.append(next_color)
-        # tails = it.combinations(free_cols, 6 - len(palette))
-        # candidates = [palette + list(map(int, tail)) for tail in tails]
-        # palette = max(candidates, key=lambda x: get_contrast(palette, x))
-
-    
-
-    # supercluster = Supercluster(members)
-    # full_weight = np.sum(members.weights)
-    # supercluster.set_n(len(supercluster.ixs))
-    # while True:
-    #     print(len(supercluster.clusters))
-    #     if len(supercluster.clusters) <= 3:
-    #         print("too few clusters")
-    #         break
-    #     heaviest = max(supercluster.clusters, key=lambda x: x.weight)
-    #     if heaviest.weight / full_weight > 1 / 2 and len(heaviest.ixs) >= 4:
-    #         print("too heavy")
-    #         break
-    #     supercluster.merge()
-    # # TODO: make some provision for when heaviest hever ends up with at least four
-    # # colors
-
-    # clusters = sorted(supercluster.clusters, key=lambda x: x.weight, reverse=True)
-    # heaviest = supercluster.copy(inc_members=clusters[0].ixs)
-    # heaviest.set_n(4)
-    # palette = [int(x.centroid) for x in heaviest.clusters]
-    # # palette = [tuple(map(int, vectors[x])) for x in heaviest.clusters]
-    # aaa = [supercluster.copy(inc_members=x.ixs) for x in clusters]
-
-    # def get_contrast(palette_: list[int]) -> float:
-    #     return np.mean(pmatrix[np.ix_(palette_, palette_)])
-
-    # def get_contrast(palette_: list[int]) -> float:
-    #     return np.mean(supercluster.members.pmatrix[np.ix_(palette_, palette_)])
-
-    # # while len(palette) < 6:
-    # #     free_cols = supercluster.ixs
-
-    # tails = it.combinations(supercluster.ixs, 6 - len(palette))
-    # candidates = [palette + list(map(int, tail)) for tail in tails]
-    # palette = max(candidates, key=get_contrast)
-    # pvectors = [supercluster.members.vectors[x] for x in palette]
-
-
-    # target = TargetImage(image_path, bite_size)
-    # new_ixs = target.clusters.ixs
-    # target = posterize(image_path, 9, new_ixs, 16, ignore_cache=False)
-
-    # kept = np.unique(_merge_layers(*target.layers[:12]))
-    # vss_2 = [tuple(map(int, vectors[x])) for x in kept]
-    # # assert not set(vss_2) - set(vs)
-
-    # members = re_weigh(target.clusters.members, kept)
-    # supercluster = SumSupercluster(members)
-
-    # supercluster.set_n(6)
-    # palette = [x.centroid for x in supercluster.clusters]
-    # # palette = [kept[x] for x in palette]
-    # # target = posterize(image_path, 0, paletteE ignore_cache=True)
-    # # _draw_target(target, 6, "input_selected")
-
-    # vectors = members.vectors
-
-    # dist = target.get_distribution(palette)
-    # vss2 = [tuple(map(int, vectors[x])) for x in palette]
 
     dist = [1, 1, 1, 1, 1, 1]
 
@@ -933,7 +659,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
