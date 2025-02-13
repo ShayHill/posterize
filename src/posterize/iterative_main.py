@@ -126,17 +126,12 @@ class TargetImage:
     def __init__(
         self,
         path: Path,
-        bite_size: float | None = None,
     ) -> None:
         """Initialize a TargetImage.
 
         :param path: path to the image
-        :param bite_size: the minimum delta (defines in
-            self.clusters.members.pmatrix) between layer colors.
         """
         self._path = path
-        self._bite_size = 9 if bite_size is None else bite_size
-
         self.clusters, self.image = new_supercluster_with_quantized_image(
             Supercluster, path
         )
@@ -178,7 +173,8 @@ class TargetImage:
 
     @functools.cached_property
     def cache_stem(self) -> str:
-        cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
+        # cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
+        cache_bite_size = "TODO"
         return f"{self._path.stem}-{cache_bite_size}"
 
     def _get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
@@ -348,7 +344,7 @@ class TargetImage:
         return {
             int(x)
             for x in state.colors
-            if min(self.pmatrix[x, layer_colors]) > self._bite_size
+            if min(self.pmatrix[x, layer_colors]) > state.min_delta
         }
 
     def get_best_candidate(self, state: Layers) -> IntA:
@@ -438,9 +434,8 @@ def posterize(
     :return: posterized image
     """
     ignore_cache = True
-    print(f"{bite_size=}")
 
-    target = TargetImage(image_path, bite_size)
+    target = TargetImage(image_path)
 
     state = Layers(set(target.clusters.ixs), bite_size)
 

@@ -121,7 +121,7 @@ def posterize_to_n_colors(
     print(f"{image_path.stem} {min_dist}")
     bite_size = 24
     while bite_size >= 0:
-        target = TargetImage(image_path, bite_size)
+        target = TargetImage(image_path)
         vectors = target.clusters.members.vectors
         # break
 
@@ -141,7 +141,6 @@ def posterize_to_n_colors(
         draw_target(target, state, 24, "input_24")
         break
 
-    target = TargetImage(image_path, bite_size)
     target, state = posterize(image_path, 12, None, 6, ignore_cache=False)
 
     colors = [int(max(x)) for x in state.layers]
