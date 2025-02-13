@@ -243,20 +243,20 @@ class TargetImage:
         layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
-    def append_color(self, layers: IntA, *palette_indices: int) -> IntA:
-        """Append a color to the current state.
+    # def append_color(self, layers: IntA, *palette_indices: int) -> IntA:
+    #     """Append a color to the current state.
 
-        :param layers: the current state or a presumed state
-        :param palette_indices: the index of the color to use in the new layer.
-            Multiple args allowed.
-        """
-        if not palette_indices:
-            return layers
-        # TODO: factor out state variable and take state arg
-        state = Layers(self.clusters.ixs, self._bite_size, layers)
-        new_layer = self.new_candidate_layer(state, palette_indices[0])
-        state.layers = np.append(state.layers, [new_layer], axis=0)
-        return self.append_color(state.layers, *palette_indices[1:])
+    #     :param layers: the current state or a presumed state
+    #     :param palette_indices: the index of the color to use in the new layer.
+    #         Multiple args allowed.
+    #     """
+    #     if not palette_indices:
+    #         return layers
+    #     # TODO: factor out state variable and take state arg
+    #     state = Layers(self.clusters.ixs, self._bite_size, layers)
+    #     new_layer = self.new_candidate_layer(state, palette_indices[0])
+    #     state.layers = np.append(state.layers, [new_layer], axis=0)
+    #     return self.append_color(state.layers, *palette_indices[1:])
 
     def find_layer_substitute(self, state: Layers, index: int) -> tuple[int, float]:
         """Find a substitute color for a layer.
@@ -274,49 +274,49 @@ class TargetImage:
             return candidate_color, 0
         return candidate_color, float(self.pmatrix[this_color, candidate_color])
 
-    def check_layers(
-        self,
-        layers: IntA,
-        num_layers: int | None = None,
-        seen: dict[tuple[int, ...], float] | None = None,
-    ) -> IntA:
-        """Check that each layer is the same it would be if it were a candidate."""
-        if num_layers is None:
-            num_layers = len(layers)
+    # def check_layers(
+    #     self,
+    #     layers: IntA,
+    #     num_layers: int | None = None,
+    #     seen: dict[tuple[int, ...], float] | None = None,
+    # ) -> IntA:
+    #     """Check that each layer is the same it would be if it were a candidate."""
+    #     if num_layers is None:
+    #         num_layers = len(layers)
 
-        if len(layers) == num_layers:
-            if seen is None:
-                seen = {}
-            key = tuple(int(np.max(x)) for x in layers)
-            if key in seen:
-                best_key = min(seen.items(), key=itemgetter(1))[0]
-                if key == best_key:
-                    return layers
-                layers = layers[:0]
-                layers = self.append_color(layers, *key)
-                return layers
+    #     if len(layers) == num_layers:
+    #         if seen is None:
+    #             seen = {}
+    #         key = tuple(int(np.max(x)) for x in layers)
+    #         if key in seen:
+    #             best_key = min(seen.items(), key=itemgetter(1))[0]
+    #             if key == best_key:
+    #                 return layers
+    #             layers = layers[:0]
+    #             layers = self.append_color(layers, *key)
+    #             return layers
 
-            seen[key] = self.get_cost(*layers)
-            print(f"     ++ {key} {seen[key]}")
+    #         seen[key] = self.get_cost(*layers)
+    #         print(f"     ++ {key} {seen[key]}")
 
-        # TODO: factor out state variable and take state arg
-        state = Layers(self.clusters.ixs, self._bite_size, layers)
-        for i, _ in enumerate(layers[:-1]):
-            new_color, delta_e = self.find_layer_substitute(state, i)
-            if delta_e > 0:
-                print(f"color mismatch {i=} {len(layers)=}")
-                layers = self.append_color(layers[:i], new_color)
-                return self.check_layers(layers, num_layers, seen=seen)
+    #     # TODO: factor out state variable and take state arg
+    #     state = Layers(self.clusters.ixs, self._bite_size, layers)
+    #     for i, _ in enumerate(layers[:-1]):
+    #         new_color, delta_e = self.find_layer_substitute(state, i)
+    #         if delta_e > 0:
+    #             print(f"color mismatch {i=} {len(layers)=}")
+    #             layers = self.append_color(layers[:i], new_color)
+    #             return self.check_layers(layers, num_layers, seen=seen)
 
-        # this will only be true if no substitutes were found
-        if num_layers == len(layers):
-            return layers
+    #     # this will only be true if no substitutes were found
+    #     if num_layers == len(layers):
+    #         return layers
 
-        state = Layers(self.clusters.ixs, self._bite_size, layers)
-        self._fill_layers(state, num_layers)
-        layers = state.layers
+    #     state = Layers(self.clusters.ixs, self._bite_size, layers)
+    #     self._fill_layers(state, num_layers)
+    #     layers = state.layers
 
-        return self.check_layers(layers, seen=seen)
+    #     return self.check_layers(layers, seen=seen)
 
     def _fill_layers(self, state: Layers, num_layers: int):
         """Add layers (without check_layers) until there are num_layers.
@@ -336,8 +336,8 @@ class TargetImage:
             transparent
         """
         state.layers = np.append(state.layers, [layer], axis=0)
-        if len(state.layers) > 2:
-            self.layers = self.check_layers(state.layers)
+        # if len(state.layers) > 2:
+            # self.layers = self.check_layers(state.layers)
 
     def get_colors(self, state: Layers) -> set[int]:
         """Get available colors in the image."""
