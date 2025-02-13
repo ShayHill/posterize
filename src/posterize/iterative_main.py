@@ -142,9 +142,9 @@ class TargetImage:
         )
 
         # initialize cached properties
-        self._layers = np.empty((0, self.pmatrix.shape[0]), dtype=int)
-        self.state = np.ones_like(self.image) * -1
-        self.state_cost_matrix = np.ones_like(self.image) * np.inf
+        # self._layers = np.empty((0, self.pmatrix.shape[0]), dtype=int)
+        # self.state = np.ones_like(self.image) * -1
+        # self.state_cost_matrix = np.ones_like(self.image) * np.inf
 
     @property
     def vectors(self) -> npt.NDArray[np.floating[Any]]:
@@ -161,19 +161,20 @@ class TargetImage:
         """Shorthand for self.clusters.members.weights."""
         return self.clusters.members.weights
 
-    def get_state_weight(self, idx: int) -> float:
+    def get_state_weight(self, state: Layers, idx: int) -> float:
         """Get the weight of a color index in the current state."""
-        return float(np.sum(self.weights[self.state == idx]))
+        state_image = _merge_layers(*state.layers)
+        return float(np.sum(self.weights[state_image == idx]))
 
-    @property
-    def layers(self) -> IntA:
-        return self._layers
+    # @property
+    # def layers(self) -> IntA:
+    #     return self._layers
 
-    @layers.setter
-    def layers(self, value: IntA) -> None:
-        self._layers = value
-        self.state = _merge_layers(*value)
-        self.state_cost_matrix = self._get_cost_matrix(self.state)
+    # @layers.setter
+    # def layers(self, value: IntA) -> None:
+    #     self._layers = value
+    #     self.state = _merge_layers(*value)
+    #     self.state_cost_matrix = self._get_cost_matrix(self.state)
 
     @functools.cached_property
     def cache_stem(self) -> str:
@@ -379,18 +380,18 @@ def _expand_layers(
 
 
 def draw_target(
-    target: TargetImage, num_cols: int | None = None, stem: str = ""
+        target: TargetImage, state: Layers, num_cols: int | None = None, stem: str = ""
 ) -> None:
     """Infer a name from TargetImage args and write image to file.
 
     This is for debugging how well image is visually represented and what colors
     might be "eating" others in the image.
     """
-    vectors = target.clusters.members.vectors
-    stem_parts = (target.cache_stem, len(target.layers), num_cols, stem)
+    vectors = target.vectors
+    stem_parts = (target.cache_stem, len(state.layers), num_cols, stem)
     output_stem = "-".join(_stemize(*stem_parts))
 
-    big_layers = _expand_layers(target.image, target.layers)
+    big_layers = _expand_layers(target.image, state.layers)
     draw_posterized_image(vectors, big_layers[:num_cols], output_stem)
 
 
@@ -466,4 +467,4 @@ def posterize(
             ignore_cache=ignore_cache,
         )
 
-    return target
+    return target, state

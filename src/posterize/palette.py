@@ -134,21 +134,21 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 12, ixs, 6, ignore_cache=False)
-        draw_target(target, 6, "input_06")
-        draw_target(target, 12, "input_12")
-        draw_target(target, 16, "input_16")
-        draw_target(target, 24, "input_24")
+        target, state = posterize(image_path, 12, ixs, 6, ignore_cache=False)
+        draw_target(target, state, 6, "input_06")
+        draw_target(target, state, 12, "input_12")
+        draw_target(target, state, 16, "input_16")
+        draw_target(target, state, 24, "input_24")
         break
 
     target = TargetImage(image_path, bite_size)
-    target = posterize(image_path, 12, None, 6, ignore_cache=False)
+    target, state = posterize(image_path, 12, None, 6, ignore_cache=False)
 
-    colors = [int(max(x)) for x in target._layers]
+    colors = [int(max(x)) for x in state.layers]
     vectors = target.clusters.members.vectors[colors]
     pmatrix = build_proximity_matrix(vectors, vibrance_weighted_delta_e)
     weights = [
-        target.get_state_weight(x) * (max(y) - min(y))
+        target.get_state_weight(state, x) * (max(y) - min(y))
         for x, y in zip(colors, vectors, strict=True)
     ]
     members = Members(vectors, weights=weights, pmatrix=pmatrix)
