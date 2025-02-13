@@ -134,7 +134,7 @@ def posterize_to_n_colors(
         # new_ixs_array = np.array(new_ixs, dtype=np.int32)
         # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
 
-        target = posterize(image_path, 12, ixs, 16, ignore_cache=False)
+        target = posterize(image_path, 12, ixs, 6, ignore_cache=False)
         draw_target(target, 6, "input_06")
         draw_target(target, 12, "input_12")
         draw_target(target, 16, "input_16")
@@ -142,7 +142,7 @@ def posterize_to_n_colors(
         break
 
     target = TargetImage(image_path, bite_size)
-    target = posterize(image_path, 12, None, 16, ignore_cache=False)
+    target = posterize(image_path, 12, None, 6, ignore_cache=False)
 
     colors = [int(max(x)) for x in target._layers]
     vectors = target.clusters.members.vectors[colors]

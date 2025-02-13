@@ -328,15 +328,15 @@ class TargetImage:
             new_layer = self.get_best_candidate(state)
             state.layers = np.append(state.layers, [new_layer], axis=0)
 
-    def append_layer_to_state(self, layer: IntA) -> None:
+    def append_layer(self, state: Layers, layer: IntA) -> None:
         """Append a layer to the current state.
 
         param layer: (m, n) array with a palette index in opaque pixels and -1 in
             transparent
         """
-        self.layers = np.append(self.layers, [layer], axis=0)
-        if len(self.layers) > 2:
-            self.layers = self.check_layers(self.layers)
+        state.layers = np.append(state.layers, [layer], axis=0)
+        if len(state.layers) > 2:
+            self.layers = self.check_layers(state.layers)
 
     def get_colors(self, state: Layers) -> set[int]:
         """Get available colors in the image."""
@@ -441,7 +441,7 @@ def posterize(
 
     target = TargetImage(image_path, bite_size)
 
-    layers = Layers(set(target.clusters.ixs), bite_size)
+    state = Layers(set(target.clusters.ixs), bite_size)
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
@@ -450,15 +450,14 @@ def posterize(
         # if ixs:
         #     target.clusters = target.clusters.copy(inc_members=ixs)
 
-        while len(target.layers) < (num_cols or 1) and len(target.layers) < len(
-            target.get_colors(layers)
-        ):
-            target.append_layer_to_state(target.get_best_candidate(layers))
-            layers = Layers(set(target.clusters.ixs), bite_size)
+        while len(state.layers) < (num_cols or 1) and target.get_colors(state):
+            print("heeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeere")
+            print(f"----------------------------------------------  {len(state.layers)=}")
+            target.append_layer(state, target.get_best_candidate(state))
 
-    np.save(cache_path, target.layers)
+    np.save(cache_path, state.layers)
 
-    if len(target.layers) < (num_cols or 1):
+    if len(state.layers) < (num_cols or 1):
         return posterize(
             image_path,
             max(bite_size - 1, 0),
