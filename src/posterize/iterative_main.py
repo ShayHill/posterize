@@ -59,16 +59,15 @@ class Layers:
         contain no -1 values.
     """
 
-    layers: IntA
     colors: set[int]
+    min_delta: float | None = None
+    layers: IntA | None = None
 
-    def __init__(self, colors: Iterable[int], layers: IntA | None = None) -> None:
-        self.colors = set(colors)
-        if layers is None:
-            self.layers = np.empty((0, len(self.colors)), dtype=int)
-        else:
-            assert layers.shape[1] == len(self.colors)
-            self.layers = layers
+    def __post_init__(self) -> None:
+        if self.layers is None:
+            self.layers = np.empty((0, 512), dtype=int)
+        if self.min_delta is None:
+            self.min_delta = 9
 
     def with_layer_hidden(self, index: int) -> Layers:
         """Hide a layer by matching its color to the next layer."""
@@ -81,7 +80,7 @@ class Layers:
         with_hidden = self.layers.copy()
         mask_color = np.max(self.layers[index + 1])
         with_hidden[index] = np.where(self.layers[index] == -1, -1, mask_color)
-        return Layers(self.colors, with_hidden)
+        return Layers(self.colors, self.min_delta, with_hidden)
 
 
 def _merge_layers(
@@ -236,7 +235,7 @@ class TargetImage:
         if not palette_indices:
             return layers
         # TODO: factor out state variable and take state arg
-        state = Layers(self.clusters.ixs, layers)
+        state = Layers(self.clusters.ixs, self._bite_size, layers)
         new_layer = self.new_candidate_layer(state, palette_indices[0])
         state.layers = np.append(state.layers, [new_layer], axis=0)
         return self.append_color(state.layers, *palette_indices[1:])
@@ -283,7 +282,7 @@ class TargetImage:
             print(f"     ++ {key} {seen[key]}")
 
         # TODO: factor out state variable and take state arg
-        state = Layers(self.clusters.ixs, layers)
+        state = Layers(self.clusters.ixs, self._bite_size, layers)
         for i, _ in enumerate(layers[:-1]):
             new_color, delta_e = self.find_layer_substitute(state, i)
             if delta_e > 0:
@@ -295,7 +294,7 @@ class TargetImage:
         if num_layers == len(layers):
             return layers
 
-        state = Layers(self.clusters.ixs, layers)
+        state = Layers(self.clusters.ixs, self._bite_size, layers)
         self._fill_layers(state, num_layers)
         layers = state.layers
 
@@ -430,7 +429,7 @@ def posterize(
 
     target = TargetImage(image_path, bite_size)
 
-    layers = Layers(target.get_colors())
+    layers = Layers(set(target.clusters.ixs))
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
