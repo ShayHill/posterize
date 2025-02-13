@@ -137,19 +137,17 @@ class TargetImage:
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
         return self.pmatrix[image, state] * self.weights
 
-    def get_cost(self, *layers: npt.NDArray[np.integer[Any]]) -> tuple[float, float]:
+    def get_cost(self, *layers: npt.NDArray[np.integer[Any]]) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
             one layer.
         :return: sum of the cost between image and (state + layer)
-        # TODO: stop returnin fallback
         """
         if not layers:
             raise ValueError("At least one layer is required.")
         cost_matrix = self._get_cost_matrix(*layers)
-        primary = float(np.sum(cost_matrix))
-        return primary, primary
+        return float(np.sum(cost_matrix))
 
     @property
     def state_cost(self) -> float:
@@ -261,7 +259,7 @@ class TargetImage:
                 layers = self.append_color(layers, *key)
                 return layers
 
-            seen[key] = self.get_cost(*layers)[0]
+            seen[key] = self.get_cost(*layers)
             print(f"     ++ {key} {seen[key]}")
 
         for i, _ in enumerate(layers[:-1]):
