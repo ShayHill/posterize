@@ -60,14 +60,19 @@ class Layers:
     """
 
     colors: set[int]
-    min_delta: float | None = None
-    layers: IntA | None = None
+    min_delta: float
+    layers: IntA 
 
-    def __post_init__(self) -> None:
-        if self.layers is None:
-            self.layers = np.empty((0, 512), dtype=int)
-        if self.min_delta is None:
+    def __init__(self, colors: Iterable[int], min_delta: float | None = None, layers: IntA | None = None) -> None:
+        self.colors = set(colors)
+        if min_delta is None:
             self.min_delta = 9
+        else:
+            self.min_delta = min_delta
+        if layers is None:
+            self.layers = np.empty((0, 512), dtype=int)
+        else:
+            self.layers = layers
 
     def with_layer_hidden(self, index: int) -> Layers:
         """Hide a layer by matching its color to the next layer."""
@@ -321,22 +326,17 @@ class TargetImage:
         if len(self.layers) > 2:
             self.layers = self.check_layers(self.layers)
 
-    def get_colors(self, state_layers: IntA | None = None) -> list[int]:
-        """Get the most common colors in the image.
-
-        :return: the rough color clusters in the image
-        """
-        if state_layers is None:
-            state_layers = self.layers
-        if len(state_layers) == 0:
-            return list(map(int, self.clusters.ixs))
-        layer_colors = np.array([np.max(x) for x in state_layers])
+    def get_colors(self, state: Layers) -> set[int]:
+        """Get available colors in the image."""
+        if len(state.layers) == 0:
+            return state.colors
+        layer_colors = np.array([np.max(x) for x in state.layers])
         assert -1 not in layer_colors
-        return [
+        return {
             int(x)
-            for x in self.clusters.ixs
+            for x in state.colors
             if min(self.pmatrix[x, layer_colors]) > self._bite_size
-        ]
+        }
 
     def get_best_candidate(self, state: Layers) -> IntA:
         """Get the best candidate layer to add to layers.
@@ -345,7 +345,7 @@ class TargetImage:
         :return: the candidate layer with the lowest cost
         """
         get_cand = functools.partial(self.new_candidate_layer, state)
-        candidates = map(get_cand, self.get_colors(state.layers))
+        candidates = map(get_cand, self.get_colors(state))
         scored = ((self.get_cost(*state.layers, x), x) for x in candidates)
         winner = min(scored, key=itemgetter(0))[1]
         return winner
@@ -429,7 +429,7 @@ def posterize(
 
     target = TargetImage(image_path, bite_size)
 
-    layers = Layers(set(target.clusters.ixs))
+    layers = Layers(set(target.clusters.ixs), bite_size)
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
@@ -439,9 +439,10 @@ def posterize(
         #     target.clusters = target.clusters.copy(inc_members=ixs)
 
         while len(target.layers) < (num_cols or 1) and len(target.layers) < len(
-            target.get_colors()
+            target.get_colors(layers)
         ):
             target.append_layer_to_state(target.get_best_candidate(layers))
+            layers = Layers(set(target.clusters.ixs), bite_size)
 
     np.save(cache_path, target.layers)
 
