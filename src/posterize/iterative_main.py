@@ -6,6 +6,7 @@ tearing fast_main apart.
 :author: Shay Hill
 :created: 2025-02-06
 """
+
 from __future__ import annotations
 
 import functools
@@ -37,6 +38,7 @@ Ints: TypeAlias = npt.ArrayLike
 FltA: TypeAlias = npt.NDArray[np.floating[Any]]
 Flts: TypeAlias = npt.ArrayLike
 
+
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
@@ -44,6 +46,7 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
 
 @dataclasses.dataclass
 class Layers:
@@ -55,6 +58,7 @@ class Layers:
         colors and -1 for transparent. The first layer will be a solid color and
         contain no -1 values.
     """
+
     layers: IntA
     colors: set[int]
 
@@ -160,9 +164,7 @@ class TargetImage:
         cache_bite_size = f"{self._bite_size:05.2f}".replace(".", "_")
         return f"{self._path.stem}-{cache_bite_size}"
 
-    def _get_cost_matrix(
-        self, *layers: IntA
-    ) -> npt.NDArray[np.floating[Any]]:
+    def _get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -199,9 +201,7 @@ class TargetImage:
         """
         return float(np.sum(self.state_cost_matrix))
 
-    def new_candidate_layer(
-        self, palette_index: int, state_layers: IntA
-    ) -> IntA:
+    def new_candidate_layer(self, state: Layers, palette_index: int) -> IntA:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -213,6 +213,8 @@ class TargetImage:
 
         If there are no layers, the candidate will be a solid color.
         """
+        # TODO: factor out state variable and take state arg
+        state_layers = state.layers
         solid = np.full(self.pmatrix.shape[0], palette_index)
         if len(state_layers) == 0:
             return solid
@@ -224,9 +226,7 @@ class TargetImage:
         layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
         return layer
 
-    def append_color(
-        self, layers: IntA, *palette_indices: int
-    ) -> IntA:
+    def append_color(self, layers: IntA, *palette_indices: int) -> IntA:
         """Append a color to the current state.
 
         :param layers: the current state or a presumed state
@@ -235,31 +235,16 @@ class TargetImage:
         """
         if not palette_indices:
             return layers
-        new_layer = self.new_candidate_layer(palette_indices[0], layers)
-        layers = np.append(layers, [new_layer], axis=0)
-        return self.append_color(layers, *palette_indices[1:])
-
-    def _match_layer_color(
-        self,
-        layer_a: IntA,
-        layer_b: IntA,
-    ) -> IntA:
-        """Match the color of layer_a to layer_b.
-
-        :param layer_a: (r, c) array with a palette index in opaque pixels and -1 in
-            transparent
-        :param layer_b: (r, c) array with a palette index in opaque pixels and -1 in
-            transparent
-        :return: (r, c) array with the same shape as layer_a where the color of each
-            pixel is matched to the color of the corresponding pixel in layer_b.
-        """
-        color = np.max(layer_b)
-        return np.where(layer_a == -1, -1, color)
+        # TODO: factor out state variable and take state arg
+        state = Layers(self.clusters.ixs, layers)
+        new_layer = self.new_candidate_layer(state, palette_indices[0])
+        state.layers = np.append(state.layers, [new_layer], axis=0)
+        return self.append_color(state.layers, *palette_indices[1:])
 
     def find_layer_substitute(self, state: Layers, index: int) -> tuple[int, float]:
         """Find a substitute color for a layer.
 
-        :param state: Layers instance 
+        :param state: Layers instance
         :param index: the index of the layer to find a substitute for. This can only
             work if the index is less than len(layers) - 1.
         :return: the index of the substitute color and the delta between the
@@ -297,7 +282,7 @@ class TargetImage:
             seen[key] = self.get_cost(*layers)
             print(f"     ++ {key} {seen[key]}")
 
-        #TODO: factor out state variable and take state arg
+        # TODO: factor out state variable and take state arg
         state = Layers(self.clusters.ixs, layers)
         for i, _ in enumerate(layers[:-1]):
             new_color, delta_e = self.find_layer_substitute(state, i)
@@ -337,9 +322,7 @@ class TargetImage:
         if len(self.layers) > 2:
             self.layers = self.check_layers(self.layers)
 
-    def get_colors(
-        self, state_layers: IntA | None = None
-    ) -> list[int]:
+    def get_colors(self, state_layers: IntA | None = None) -> list[int]:
         """Get the most common colors in the image.
 
         :return: the rough color clusters in the image
@@ -362,13 +345,9 @@ class TargetImage:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        #TODO: factor out state_layers var
-        state_layers = state.layers
-        get_cand = functools.partial(
-            self.new_candidate_layer, state_layers=state_layers
-        )
-        candidates = map(get_cand, self.get_colors(state_layers))
-        scored = ((self.get_cost(*state_layers, x), x) for x in candidates)
+        get_cand = functools.partial(self.new_candidate_layer, state)
+        candidates = map(get_cand, self.get_colors(state.layers))
+        scored = ((self.get_cost(*state.layers, x), x) for x in candidates)
         winner = min(scored, key=itemgetter(0))[1]
         return winner
 
@@ -466,7 +445,6 @@ def posterize(
             target.append_layer_to_state(target.get_best_candidate(layers))
 
     np.save(cache_path, target.layers)
-
 
     if len(target.layers) < (num_cols or 1):
         return posterize(
