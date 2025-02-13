@@ -12,14 +12,14 @@ import logging
 from operator import itemgetter
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterator, TypeAlias
+from typing import Annotated, Iterator, TypeAlias, Iterable
 
 
 import numpy as np
 from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
-
+import dataclasses
 from posterize import paths
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
@@ -42,6 +42,23 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
+@dataclasses.dataclass
+class Layers:
+    """State for an image approximation.
+
+    :param colors: the subset of color indices (TargetImage.clusters.ixs) available
+        for use in layers.
+    :param layers: (n, c) array of n layers, each containing a value (color index) in
+        colors and -1 for transparent. The first layer will be a solid color and
+        contain no -1 values.
+    """
+    layers: IntA
+    colors: set[int]
+
+    def __init__(self, colors: Iterable[int]) -> None:
+        self.colors = set(colors)
+        self.layers = np.empty((0, len(self.colors)), dtype=int)
 
 
 def _merge_layers(
