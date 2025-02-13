@@ -43,7 +43,7 @@ def _merge_layers(
 ) -> npt.NDArray[np.integer[Any]]:
     """Merge layers into a single layer.
 
-    :param layers: (n, c) array of n layers, each containing a value for each color
+    :param layers: (n, c) array of n layers, each containing a value (color index) for each color
         index. These will all be the same color or -1 for colors that are transparent
         in each layer.
     :return: one (c,) array with the last non-transparent color in each position

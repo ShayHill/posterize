@@ -4,12 +4,9 @@
 :created: 2025-02-11
 """
 
-import functools
 import logging
-from operator import itemgetter
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterator
 from posterize.iterative_main import Supercluster, posterize, TargetImage, draw_target
 
 from palette_image.svg_display import write_palette
@@ -18,7 +15,6 @@ from palette_image.color_block_ops import sliver_color_blocks
 import numpy as np
 from basic_colormath import (
     rgb_to_hsv,
-    get_delta_e_lab,
     get_deltas_e,
     rgbs_to_hsv,
 )
@@ -27,8 +23,6 @@ from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
 
 from posterize import paths
-from posterize.image_processing import draw_posterized_image
-from posterize.quantization import new_supercluster_with_quantized_image
 
 from typing import Any, Callable
 
@@ -42,8 +36,9 @@ def build_proximity_matrix(
     """Build a proximity matrix from a list of colors.
 
     :param colors: an array (n, d) of Lab or rgb colors
-    :param func: a commutative function that calculates the proximity of two colors.
-        It is assumed that identical colors have a proximity of 0.
+    :param func: a commutative, vectorized function that calculates the proximity
+        between two colors. It is assumed that identical colors have a
+        proximity of 0.
     :return: an array (n, n) of proximity values between every pair of colors
 
     The proximity matrix is symmetric.
@@ -91,7 +86,7 @@ def vibrance_weighted_delta_e(color_a: npt.ArrayLike, color_b: npt.ArrayLike) ->
     hsvs_a = rgbs_to_hsv(color_a)
     hsvs_b = rgbs_to_hsv(color_b)
     deltas_h = get_circular_deltas(hsvs_a[:, 0], hsvs_b[:, 0])
-    return deltas_e * np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h
+    return deltas_e * ((255 * 180) + np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h)
 
 
 class SumSupercluster(SuperclusterBase):
@@ -237,7 +232,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
@@ -248,14 +243,17 @@ if __name__ == "__main__":
             print(f"skipping {image_path}")
             continue
         print(f"processing {image_path}")
-        seen: set[tuple[int, ...]] = set()
-        _ = posterize_to_n_colors(
-            image_path,
-            bite_size=9,
-            ixs=(),
-            num_cols=6,
-            seen=seen,
-        )
+        try:
+            seen: set[tuple[int, ...]] = set()
+            _ = posterize_to_n_colors(
+                image_path,
+                bite_size=9,
+                ixs=(),
+                num_cols=6,
+                seen=seen,
+            )
+        except Exception as e:
+            pass
 
     print("done")
 
