@@ -1,13 +1,15 @@
 """Create a palette with backtracking after each color choicee
 
-ehis is an edit of fast_main, but it's too much of a departure to create without
+This is an edit of fast_main, but it's too much of a departure to create without
 tearing fast_main apart.
 
 :author: Shay Hill
 :created: 2025-02-06
 """
+from __future__ import annotations
 
 import functools
+
 import logging
 from operator import itemgetter
 import numpy as np
@@ -63,6 +65,19 @@ class Layers:
         else:
             assert layers.shape[1] == len(self.colors)
             self.layers = layers
+
+    def with_layer_hidden(self, index: int) -> Layers:
+        """Hide a layer by matching its color to the next layer."""
+        if len(self.layers) == 1:
+            msg = "Cannot hide a single layer."
+            raise ValueError(msg)
+        if index >= len(self.layers) - 1:
+            msg = "Cannot hide the last layer."
+            raise ValueError(msg)
+        with_hidden = self.layers.copy()
+        mask_color = np.max(self.layers[index + 1])
+        with_hidden[index] = np.where(self.layers[index] == -1, -1, mask_color)
+        return Layers(self.colors, with_hidden)
 
 
 def _merge_layers(
@@ -241,26 +256,17 @@ class TargetImage:
         color = np.max(layer_b)
         return np.where(layer_a == -1, -1, color)
 
-    def find_layer_substitute(
-        self, layers: IntA, index: int
-    ) -> tuple[int, float]:
+    def find_layer_substitute(self, state: Layers, index: int) -> tuple[int, float]:
         """Find a substitute color for a layer.
 
-        :param layers: (n, r, c) array with palette indices in opaque pixels and -1 in
-            transparent
+        :param state: Layers instance 
         :param index: the index of the layer to find a substitute for. This can only
             work if the index is less than len(layers) - 1.
-        :return: the index of the substitute color and the delta E between the
+        :return: the index of the substitute color and the delta between the
             substitute and the original color
         """
-        this_color = max(layers[index])
-        with_layer_hidden = layers.copy()
-        with_layer_hidden[index] = self._match_layer_color(
-            layers[index], layers[index + 1]
-        )
-        #TODO: factor out state variable
-        state = Layers(self.clusters.ixs, with_layer_hidden)
-        candidate = self.get_best_candidate(state)
+        this_color = max(state.layers[index])
+        candidate = self.get_best_candidate(state.with_layer_hidden(index))
         candidate_color = max(candidate)
         if this_color == candidate_color:
             return candidate_color, 0
@@ -291,8 +297,10 @@ class TargetImage:
             seen[key] = self.get_cost(*layers)
             print(f"     ++ {key} {seen[key]}")
 
+        #TODO: factor out state variable and take state arg
+        state = Layers(self.clusters.ixs, layers)
         for i, _ in enumerate(layers[:-1]):
-            new_color, delta_e = self.find_layer_substitute(layers, i)
+            new_color, delta_e = self.find_layer_substitute(state, i)
             if delta_e > 0:
                 print(f"color mismatch {i=} {len(layers)=}")
                 layers = self.append_color(layers[:i], new_color)
@@ -348,9 +356,7 @@ class TargetImage:
             if min(self.pmatrix[x, layer_colors]) > self._bite_size
         ]
 
-    def get_best_candidate(
-        self, state: Layers
-    ) -> IntA:
+    def get_best_candidate(self, state: Layers) -> IntA:
         """Get the best candidate layer to add to layers.
 
         :param state_layers: the current state or a presumed state
