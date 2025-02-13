@@ -38,6 +38,12 @@ Ints: TypeAlias = npt.ArrayLike
 FltA: TypeAlias = npt.NDArray[np.floating[Any]]
 Flts: TypeAlias = npt.ArrayLike
 
+class ColorsExhaustedError(Exception):
+    """Exception raised when a new layer is requested, but no colors are available."""
+    
+    def __init__(self, message: str ="No available colors.") -> None:
+        self.message = message
+        super().__init__(self.message)
 
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
@@ -341,8 +347,10 @@ class TargetImage:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        get_cand = functools.partial(self.new_candidate_layer, state)
-        candidates = map(get_cand, self.get_colors(state))
+        available_colors = self.get_colors(state)
+        if not available_colors:
+            raise ColorsExhaustedError
+        candidates = (self.new_candidate_layer(state, x) for x in available_colors)
         scored = ((self.get_cost(*state.layers, x), x) for x in candidates)
         winner = min(scored, key=itemgetter(0))[1]
         return winner
