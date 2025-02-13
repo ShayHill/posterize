@@ -119,29 +119,12 @@ def posterize_to_n_colors(
 ) -> list[int] | None:
 
     print(f"{image_path.stem} {min_dist}")
-    bite_size = 24
-    while bite_size >= 0:
-        target = TargetImage(image_path)
-        vectors = target.clusters.members.vectors
-        # break
 
-        # strip away whites
-        # new_ixs = target.clusters.ixs
-        # new_ixs = [x for x in new_ixs if min(vectors[x]) < 90]
-        # new_ixs = [x for x in new_ixs if max(vectors[x]) > 90]
-        # new_ixs = [x for x in new_ixs if rgb_to_hsv(vectors[x])[1] > 40]
-        # vs = [tuple(map(int, vectors[x])) for x in new_ixs]
-        # new_ixs_array = np.array(new_ixs, dtype=np.int32)
-        # target.clusters = target.clusters.copy(inc_members=new_ixs_array)
-
-        target, state = posterize(image_path, 12, ixs, 6, ignore_cache=False)
-        draw_target(target, state, 6, "input_06")
-        draw_target(target, state, 12, "input_12")
-        draw_target(target, state, 16, "input_16")
-        draw_target(target, state, 24, "input_24")
-        break
-
-    target, state = posterize(image_path, 12, None, 6, ignore_cache=False)
+    target, state = posterize(image_path, 12, ixs, 24, ignore_cache=False)
+    draw_target(target, state, 6, "input_06")
+    draw_target(target, state, 12, "input_12")
+    draw_target(target, state, 16, "input_16")
+    draw_target(target, state, 24, "input_24")
 
     colors = [int(max(x)) for x in state.layers]
     vectors = target.clusters.members.vectors[colors]
@@ -155,7 +138,6 @@ def posterize_to_n_colors(
 
     heaviest = _get_dominant(supercluster, min_members=4)
     heaviest.set_n(4)
-    aaa = heaviest.get_as_vectors()
 
     palette = [x.centroid for x in heaviest.clusters]
 
@@ -231,7 +213,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
@@ -252,7 +234,6 @@ if __name__ == "__main__":
                 seen=seen,
             )
         except Exception as e:
-            raise e
             pass
 
     print("done")
