@@ -308,7 +308,7 @@ class TargetImage:
 
     #     return self.check_layers(layers, seen=seen)
 
-    def _fill_layers(self, state: Layers, num_layers: int):
+    def fill_layers(self, state: Layers, num_layers: int):
         """Add layers (without check_layers) until there are num_layers.
 
         :param num_layers: the number of layers to add
@@ -316,7 +316,10 @@ class TargetImage:
         :return: layers with num_layers. This does not alter the state.
         """
         while len(state.layers) < num_layers:
-            new_layer = self.get_best_candidate(state)
+            try:
+                new_layer = self.get_best_candidate(state)
+            except ColorsExhaustedError:
+                return
             state.layers = np.append(state.layers, [new_layer], axis=0)
 
     def append_layer(self, state: Layers, layer: IntA) -> None:
@@ -442,12 +445,14 @@ def posterize(
         # if ixs:
         #     target.clusters = target.clusters.copy(inc_members=ixs)
 
-        while len(state.layers) < (num_cols or 1) and target.get_colors(state):
-            print("heeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeere")
-            print(
-                f"----------------------------------------------  {len(state.layers)=}"
-            )
-            target.append_layer(state, target.get_best_candidate(state))
+        target.fill_layers(state, num_cols or 1)
+
+        # while len(state.layers) < (num_cols or 1) and target.get_colors(state):
+        #     print("heeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeere")
+        #     print(
+        #         f"----------------------------------------------  {len(state.layers)=}"
+        #     )
+        #     target.append_layer(state, target.get_best_candidate(state))
 
     np.save(cache_path, state.layers)
 
