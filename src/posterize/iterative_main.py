@@ -74,6 +74,15 @@ class Layers:
         else:
             self.layers = layers
 
+    @property
+    def layer_colors(self) -> list[int]:
+        """Get the non-transparent color in each layer."""
+        return [np.max(x) for x in self.layers]
+
+    def get_layer_color(self, index: int) -> int:
+        """Get the color of a layer."""
+        return np.max(self.layers[index])
+
     def with_layer_hidden(self, index: int) -> Layers:
         """Hide a layer by matching its color to the next layer."""
         if len(self.layers) == 1:
@@ -82,8 +91,11 @@ class Layers:
         if index >= len(self.layers) - 1:
             msg = "Cannot hide the last layer."
             raise ValueError(msg)
+        if index < 0:
+            msg = "Cannot use negative index to hide a layer."
+            raise ValueError(msg)
         with_hidden = self.layers.copy()
-        mask_color = np.max(self.layers[index + 1])
+        mask_color = self.get_layer_color(index + 1)
         with_hidden[index] = np.where(self.layers[index] == -1, -1, mask_color)
         return Layers(self.colors, self.min_delta, with_hidden)
 
@@ -330,8 +342,8 @@ class TargetImage:
         """Get available colors in the image."""
         if len(state.layers) == 0:
             return state.colors
-        layer_colors = np.array([np.max(x) for x in state.layers])
-        assert -1 not in layer_colors
+        layer_colors = state.layer_colors
+        assert -1 not in state.layer_colors
         return {
             int(x)
             for x in state.colors
