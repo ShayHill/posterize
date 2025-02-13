@@ -56,9 +56,13 @@ class Layers:
     layers: IntA
     colors: set[int]
 
-    def __init__(self, colors: Iterable[int]) -> None:
+    def __init__(self, colors: Iterable[int], layers: IntA | None = None) -> None:
         self.colors = set(colors)
-        self.layers = np.empty((0, len(self.colors)), dtype=int)
+        if layers is None:
+            self.layers = np.empty((0, len(self.colors)), dtype=int)
+        else:
+            assert layers.shape[1] == len(self.colors)
+            self.layers = layers
 
 
 def _merge_layers(
@@ -254,7 +258,9 @@ class TargetImage:
         with_layer_hidden[index] = self._match_layer_color(
             layers[index], layers[index + 1]
         )
-        candidate = self.get_best_candidate(with_layer_hidden)
+        #TODO: factor out state variable
+        state = Layers(self.clusters.ixs, with_layer_hidden)
+        candidate = self.get_best_candidate(state)
         candidate_color = max(candidate)
         if this_color == candidate_color:
             return candidate_color, 0
@@ -312,7 +318,9 @@ class TargetImage:
         if layers is None:
             layers = self.layers
         while len(layers) < num_layers:
-            new_layer = self.get_best_candidate(layers)
+            #TODO: factor out state variable and take state argument
+            state = Layers(self.clusters.ixs, layers)
+            new_layer = self.get_best_candidate(state)
             layers = np.append(layers, [new_layer], axis=0)
         return layers
 
@@ -346,15 +354,15 @@ class TargetImage:
         ]
 
     def get_best_candidate(
-        self, state_layers: IntA | None = None
+        self, state: Layers
     ) -> IntA:
         """Get the best candidate layer to add to layers.
 
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        if state_layers is None:
-            state_layers = self.layers
+        #TODO: factor out state_layers var
+        state_layers = state.layers
         get_cand = functools.partial(
             self.new_candidate_layer, state_layers=state_layers
         )
@@ -442,6 +450,8 @@ def posterize(
 
     target = TargetImage(image_path, bite_size)
 
+    layers = Layers(target.get_colors())
+
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
         target.layers = np.load(cache_path)
@@ -452,9 +462,10 @@ def posterize(
         while len(target.layers) < (num_cols or 1) and len(target.layers) < len(
             target.get_colors()
         ):
-            target.append_layer_to_state(target.get_best_candidate())
+            target.append_layer_to_state(target.get_best_candidate(layers))
 
     np.save(cache_path, target.layers)
+
 
     if len(target.layers) < (num_cols or 1):
         return posterize(
