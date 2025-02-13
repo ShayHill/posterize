@@ -302,27 +302,22 @@ class TargetImage:
         if num_layers == len(layers):
             return layers
 
-        layers = self._fill_layers(num_layers, layers=layers)
+        state = Layers(self.clusters.ixs, layers)
+        self._fill_layers(state, num_layers)
+        layers = state.layers
 
         return self.check_layers(layers, seen=seen)
 
-    def _fill_layers(
-        self, num_layers: int, layers: IntA | None = None
-    ) -> IntA:
+    def _fill_layers(self, state: Layers, num_layers: int):
         """Add layers (without check_layers) until there are num_layers.
 
         :param num_layers: the number of layers to add
         :param layers: the current state or a presumed state
         :return: layers with num_layers. This does not alter the state.
         """
-        if layers is None:
-            layers = self.layers
-        while len(layers) < num_layers:
-            #TODO: factor out state variable and take state argument
-            state = Layers(self.clusters.ixs, layers)
+        while len(state.layers) < num_layers:
             new_layer = self.get_best_candidate(state)
-            layers = np.append(layers, [new_layer], axis=0)
-        return layers
+            state.layers = np.append(state.layers, [new_layer], axis=0)
 
     def append_layer_to_state(self, layer: IntA) -> None:
         """Append a layer to the current state.
