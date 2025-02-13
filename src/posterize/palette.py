@@ -232,7 +232,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)

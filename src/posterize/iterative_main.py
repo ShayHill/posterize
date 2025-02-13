@@ -12,7 +12,7 @@ import logging
 from operator import itemgetter
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterator
+from typing import Annotated, Iterator, TypeAlias
 
 
 import numpy as np
@@ -29,6 +29,12 @@ from typing import Any
 logging.basicConfig(level=logging.INFO)
 
 
+IntA: TypeAlias = npt.NDArray[np.integer[Any]]
+Ints: TypeAlias = npt.ArrayLike
+
+FltA: TypeAlias = npt.NDArray[np.floating[Any]]
+Flts: TypeAlias = npt.ArrayLike
+
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
 
@@ -39,8 +45,8 @@ class Supercluster(SuperclusterBase):
 
 
 def _merge_layers(
-    *layers: npt.NDArray[np.integer[Any]],
-) -> npt.NDArray[np.integer[Any]]:
+    *layers: IntA,
+) -> IntA:
     """Merge layers into a single layer.
 
     :param layers: (n, c) array of n layers, each containing a value (color index) for each color
@@ -104,11 +110,11 @@ class TargetImage:
         return float(np.sum(self.weights[self.state == idx]))
 
     @property
-    def layers(self) -> npt.NDArray[np.integer[Any]]:
+    def layers(self) -> IntA:
         return self._layers
 
     @layers.setter
-    def layers(self, value: npt.NDArray[np.integer[Any]]) -> None:
+    def layers(self, value: IntA) -> None:
         self._layers = value
         self.state = _merge_layers(*value)
         self.state_cost_matrix = self._get_cost_matrix(self.state)
@@ -119,7 +125,7 @@ class TargetImage:
         return f"{self._path.stem}-{cache_bite_size}"
 
     def _get_cost_matrix(
-        self, *layers: npt.NDArray[np.integer[Any]]
+        self, *layers: IntA
     ) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
@@ -137,7 +143,7 @@ class TargetImage:
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
         return self.pmatrix[image, state] * self.weights
 
-    def get_cost(self, *layers: npt.NDArray[np.integer[Any]]) -> float:
+    def get_cost(self, *layers: IntA) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -158,8 +164,8 @@ class TargetImage:
         return float(np.sum(self.state_cost_matrix))
 
     def new_candidate_layer(
-        self, palette_index: int, state_layers: npt.NDArray[np.integer[Any]]
-    ) -> npt.NDArray[np.integer[Any]]:
+        self, palette_index: int, state_layers: IntA
+    ) -> IntA:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -183,8 +189,8 @@ class TargetImage:
         return layer
 
     def append_color(
-        self, layers: npt.NDArray[np.integer[Any]], *palette_indices: int
-    ) -> npt.NDArray[np.integer[Any]]:
+        self, layers: IntA, *palette_indices: int
+    ) -> IntA:
         """Append a color to the current state.
 
         :param layers: the current state or a presumed state
@@ -199,9 +205,9 @@ class TargetImage:
 
     def _match_layer_color(
         self,
-        layer_a: npt.NDArray[np.integer[Any]],
-        layer_b: npt.NDArray[np.integer[Any]],
-    ) -> npt.NDArray[np.integer[Any]]:
+        layer_a: IntA,
+        layer_b: IntA,
+    ) -> IntA:
         """Match the color of layer_a to layer_b.
 
         :param layer_a: (r, c) array with a palette index in opaque pixels and -1 in
@@ -215,7 +221,7 @@ class TargetImage:
         return np.where(layer_a == -1, -1, color)
 
     def find_layer_substitute(
-        self, layers: npt.NDArray[np.integer[Any]], index: int
+        self, layers: IntA, index: int
     ) -> tuple[int, float]:
         """Find a substitute color for a layer.
 
@@ -239,10 +245,10 @@ class TargetImage:
 
     def check_layers(
         self,
-        layers: npt.NDArray[np.integer[Any]],
+        layers: IntA,
         num_layers: int | None = None,
         seen: dict[tuple[int, ...], float] | None = None,
-    ) -> npt.NDArray[np.integer[Any]]:
+    ) -> IntA:
         """Check that each layer is the same it would be if it were a candidate."""
         if num_layers is None:
             num_layers = len(layers)
@@ -278,8 +284,8 @@ class TargetImage:
         return self.check_layers(layers, seen=seen)
 
     def _fill_layers(
-        self, num_layers: int, layers: npt.NDArray[np.integer[Any]] | None = None
-    ) -> npt.NDArray[np.integer[Any]]:
+        self, num_layers: int, layers: IntA | None = None
+    ) -> IntA:
         """Add layers (without check_layers) until there are num_layers.
 
         :param num_layers: the number of layers to add
@@ -293,7 +299,7 @@ class TargetImage:
             layers = np.append(layers, [new_layer], axis=0)
         return layers
 
-    def append_layer_to_state(self, layer: npt.NDArray[np.integer[Any]]) -> None:
+    def append_layer_to_state(self, layer: IntA) -> None:
         """Append a layer to the current state.
 
         param layer: (m, n) array with a palette index in opaque pixels and -1 in
@@ -304,7 +310,7 @@ class TargetImage:
             self.layers = self.check_layers(self.layers)
 
     def get_colors(
-        self, state_layers: npt.NDArray[np.integer[Any]] | None = None
+        self, state_layers: IntA | None = None
     ) -> list[int]:
         """Get the most common colors in the image.
 
@@ -323,8 +329,8 @@ class TargetImage:
         ]
 
     def get_best_candidate(
-        self, state_layers: npt.NDArray[np.integer[Any]] | None = None
-    ) -> npt.NDArray[np.integer[Any]]:
+        self, state_layers: IntA | None = None
+    ) -> IntA:
         """Get the best candidate layer to add to layers.
 
         :param state_layers: the current state or a presumed state
@@ -342,9 +348,9 @@ class TargetImage:
 
 
 def _expand_layers(
-    quantized_image: Annotated[npt.NDArray[np.integer[Any]], "(r, c)"],
-    d1_layers: Annotated[npt.NDArray[np.integer[Any]], "(n, 512)"],
-) -> Annotated[npt.NDArray[np.integer[Any]], "(n, r, c)"]:
+    quantized_image: Annotated[IntA, "(r, c)"],
+    d1_layers: Annotated[IntA, "(n, 512)"],
+) -> Annotated[IntA, "(n, r, c)"]:
     """Expand layers to the size of the quantized image.
 
     :param quantized_image: (r, c) array with palette indices
