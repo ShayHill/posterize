@@ -86,6 +86,7 @@ def vibrance_weighted_delta_e(color_a: npt.ArrayLike, color_b: npt.ArrayLike) ->
     hsvs_a = rgbs_to_hsv(color_a)
     hsvs_b = rgbs_to_hsv(color_b)
     deltas_h = get_circular_deltas(hsvs_a[:, 0], hsvs_b[:, 0])
+    return deltas_e * ((255 * 0) + np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h)
     return deltas_e * ((255 * 180) + np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h)
 
 
@@ -97,14 +98,15 @@ class SumSupercluster(SuperclusterBase):
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
 
-def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0) -> Supercluster:
+def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0, full_weight=None) -> Supercluster:
     """Try to extract a cluster with a dominant color."""
-    full_weight = sum(x.weight for x in supercluster.clusters)
+    if full_weight is None:
+        full_weight = sum(x.weight for x in supercluster.clusters)
     supercluster.set_n(2)
     heaviest = max(supercluster.clusters, key=lambda x: x.weight)
     if heaviest.weight / full_weight > 1 / 2 and len(heaviest.ixs) >= min_members:
         supercluster = supercluster.copy(inc_members=heaviest.ixs)
-        return _get_dominant(supercluster, min_members)
+        return _get_dominant(supercluster, min_members, full_weight)
     return supercluster
 
 
@@ -120,7 +122,7 @@ def posterize_to_n_colors(
 
     print(f"{image_path.stem} {min_dist}")
 
-    target, state = posterize(image_path, 12, ixs, 24, ignore_cache=False)
+    target, state = posterize(image_path, 12, ixs, 16, ignore_cache=False)
     draw_target(target, state, 6, "input_06")
     draw_target(target, state, 12, "input_12")
     draw_target(target, state, 16, "input_16")

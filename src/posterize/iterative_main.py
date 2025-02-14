@@ -15,7 +15,7 @@ import logging
 from operator import itemgetter
 import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterator, TypeAlias, Iterable
+from typing import Annotated, Iterator, TypeAlias, Iterable, Container
 
 
 import numpy as np
@@ -67,7 +67,6 @@ class Layers:
 
     colors: set[int]
     min_delta: float
-    layers: IntA
 
     def __init__(
         self,
@@ -84,6 +83,7 @@ class Layers:
             self.layers = np.empty((0, 512), dtype=int)
         else:
             self.layers = layers
+        self.cached_states: dict[tuple[int, ...], float] = {}
 
     @property
     def layer_colors(self) -> list[int]:
@@ -270,11 +270,36 @@ class TargetImage:
         :return: layers with num_layers. This does not alter the state.
         """
         while len(state.layers) < num_layers:
-            try:
-                new_layer = self.get_best_candidate(state)
-            except ColorsExhaustedError:
-                return
+            new_layer = self.get_best_candidate(state)
             state.layers = np.append(state.layers, [new_layer], axis=0)
+
+    def check_layers(self, state: Layers):
+        key = tuple(map(int, state.layer_colors))
+        if key in state.cached_states:
+            candidates = (x for x in state.cached_states.items() if len(x[0]) == len(key))
+            best = min(candidates, key=itemgetter(1))[0]
+            state.layers = state.layers[:0]
+            self.append_color(state, *best)
+            return
+
+        state.cached_states[key] = self.get_cost(*state.layers)
+        at: int = 0
+        while at < len(state.layers) - 1:
+            new_color, delta_e = self.find_layer_substitute(state, at)
+            if delta_e == 0:  # no benefit to changing color
+                at += 1
+                continue
+
+            print(f"color mismatch {at=} {len(state.layers)=}")
+            state.layers = state.layers[:at]
+            self.append_color(state, new_color)
+            self._fill_layers(state, len(key))
+            self.check_layers(state)
+            return
+            at = 0
+
+
+
 
     def fill_layers(self, state: Layers, num_layers: int):
         """Add layers (without check_layers) until there are num_layers.
@@ -283,17 +308,16 @@ class TargetImage:
         :param layers: the current state or a presumed state
         :return: layers with num_layers. This does not alter the state.
         """
-        self._fill_layers(state, num_layers)
-        if len(state.layers) < 2:
+        if len(state.layers) == num_layers:
+            self.check_layers(state)
             return
-        for i, _ in enumerate(state.layers[:-1]):
-            new_color, delta_e = self.find_layer_substitute(state, i)
-            if delta_e > 0:
-                print(f"color mismatch {i=} {len(state.layers)=}")
-                state.layers = state.layers[:i]
-                self.append_color(state, new_color)
-                self.fill_layers(state, num_layers)
-
+        try:
+            self._fill_layers(state, len(state.layers) + 1)
+            self.check_layers(state)
+            self.fill_layers(state, num_layers)
+        except ColorsExhaustedError:
+            self.fill_layers(state, num_layers - 1)
+    
 
     def append_layer(self, state: Layers, layer: IntA) -> None:
         """Append a layer to the current state.
