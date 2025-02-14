@@ -38,12 +38,14 @@ Ints: TypeAlias = npt.ArrayLike
 FltA: TypeAlias = npt.NDArray[np.floating[Any]]
 Flts: TypeAlias = npt.ArrayLike
 
+
 class ColorsExhaustedError(Exception):
     """Exception raised when a new layer is requested, but no colors are available."""
-    
-    def __init__(self, message: str ="No available colors.") -> None:
+
+    def __init__(self, message: str = "No available colors.") -> None:
         self.message = message
         super().__init__(self.message)
+
 
 class Supercluster(SuperclusterBase):
     """A SuperclusterBase that uses divisive clustering."""
@@ -200,14 +202,6 @@ class TargetImage:
         cost_matrix = self._get_cost_matrix(*layers)
         return float(np.sum(cost_matrix))
 
-    @property
-    def state_cost(self) -> float:
-        """Get the sum of the cost at the current state.
-
-        Use this to guarantee any new element will improve the approximation.
-        """
-        return float(np.sum(self.state_cost_matrix))
-
     def new_candidate_layer(self, state: Layers, palette_index: int) -> IntA:
         """Create a new candidate state.
 
@@ -220,14 +214,12 @@ class TargetImage:
 
         If there are no layers, the candidate will be a solid color.
         """
-        # TODO: factor out state variable and take state arg
-        state_layers = state.layers
         solid = np.full(self.pmatrix.shape[0], palette_index)
-        if len(state_layers) == 0:
+        if len(state.layers) == 0:
             return solid
 
         solid_cost_matrix = self._get_cost_matrix(solid)
-        state_cost_matrix = self._get_cost_matrix(*state_layers)
+        state_cost_matrix = self._get_cost_matrix(*state.layers)
 
         layer = np.full(self.pmatrix.shape[0], -1)
         layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
@@ -276,7 +268,9 @@ class TargetImage:
     def check_layers(self, state: Layers):
         key = tuple(map(int, state.layer_colors))
         if key in state.cached_states:
-            candidates = (x for x in state.cached_states.items() if len(x[0]) == len(key))
+            candidates = (
+                x for x in state.cached_states.items() if len(x[0]) == len(key)
+            )
             best = min(candidates, key=itemgetter(1))[0]
             state.layers = state.layers[:0]
             self.append_color(state, *best)
@@ -298,9 +292,6 @@ class TargetImage:
             return
             at = 0
 
-
-
-
     def fill_layers(self, state: Layers, num_layers: int):
         """Add layers (without check_layers) until there are num_layers.
 
@@ -313,11 +304,10 @@ class TargetImage:
             return
         try:
             self._fill_layers(state, len(state.layers) + 1)
-            self.check_layers(state)
+            # self.check_layers(state)
             self.fill_layers(state, num_layers)
         except ColorsExhaustedError:
             self.fill_layers(state, num_layers - 1)
-    
 
     def append_layer(self, state: Layers, layer: IntA) -> None:
         """Append a layer to the current state.
