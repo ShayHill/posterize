@@ -4,6 +4,7 @@
 :created: 2025-02-11
 """
 
+import functools as ft
 import logging
 import numpy as np
 from pathlib import Path
@@ -28,6 +29,8 @@ from typing import Any, Callable
 
 logging.basicConfig(level=logging.INFO)
 
+PALETTES = paths.WORKING / "palettes"
+PALETTES.mkdir(exist_ok=True)
 
 def build_proximity_matrix(
     colors: npt.ArrayLike,
@@ -68,9 +71,14 @@ def get_circular_deltas(
     return np.minimum(deltas_h, 360 - deltas_h)
 
 
-def vibrance_weighted_delta_e(color_a: npt.ArrayLike, color_b: npt.ArrayLike) -> float:
-    """Get the delta E between two colors weighted by their vibrance.
+def new_vibrance_weighted_delta_e(
+    boost_vibrant: float,
 
+    color_a: npt.ArrayLike, color_b: npt.ArrayLike
+) -> npt.NDArray[np.floating[Any]]:
+    """Get the delta E between two colors weighted by their vibrance.
+    
+    :param boost_vibrant: A float [0, 1] that boosts the vibrance of the colors
     :param color_a: (r, g, b) color, TargetImage
     :param color_b: (r, g, b) color
     :return: delta E between color_a and color_b weighted by their vibrance
@@ -81,13 +89,25 @@ def vibrance_weighted_delta_e(color_a: npt.ArrayLike, color_b: npt.ArrayLike) ->
     color_a = np.asarray(color_a)
     color_b = np.asarray(color_b)
     deltas_e = get_deltas_e(color_a, color_b)
-    vibrancies_a = np.max(color_a, axis=1) - np.min(color_a, axis=1)
-    vibrancies_b = np.max(color_b, axis=1) - np.min(color_b, axis=1)
+    if boost_vibrant == 0:
+        return deltas_e
+
+    vibs_a = np.max(color_a, axis=1) - np.min(color_a, axis=1)
+    vibs_b = np.max(color_b, axis=1) - np.min(color_b, axis=1)
     hsvs_a = rgbs_to_hsv(color_a)
     hsvs_b = rgbs_to_hsv(color_b)
     deltas_h = get_circular_deltas(hsvs_a[:, 0], hsvs_b[:, 0])
-    return deltas_e * ((255 * 0) + np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h)
-    return deltas_e * ((255 * 180) + np.min([vibrancies_a, vibrancies_b], axis=0) * deltas_h)
+
+    delta_e_scalar = 255 * 180 * (1 - boost_vibrant)
+    delta_h_scalar = np.min([vibs_a, vibs_b], axis=0) * deltas_h * boost_vibrant
+
+    return deltas_e * delta_e_scalar + deltas_h * delta_h_scalar
+    # return deltas_e * (
+    #     (255 * 0) + np.min([vibs_a, vibs_b], axis=0) * deltas_h
+    # )
+    # return deltas_e * (
+    #     (255 * 180) + np.min([vibs_a, vibs_b], axis=0) * deltas_h
+    # )
 
 
 class SumSupercluster(SuperclusterBase):
@@ -98,7 +118,10 @@ class SumSupercluster(SuperclusterBase):
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
 
-def _get_dominant(supercluster: SuperclusterBase, min_members: int = 0, full_weight=None) -> Supercluster:
+
+def _get_dominant(
+    supercluster: SuperclusterBase, min_members: int = 0, full_weight=None
+) -> Supercluster:
     """Try to extract a cluster with a dominant color."""
     if full_weight is None:
         full_weight = sum(x.weight for x in supercluster.clusters)
@@ -123,59 +146,64 @@ def posterize_to_n_colors(
     print(f"{image_path.stem} {min_dist}")
 
     target, state = posterize(image_path, 12, ixs, 16, ignore_cache=False)
-    draw_target(target, state, 6, "input_06")
-    draw_target(target, state, 12, "input_12")
-    draw_target(target, state, 16, "input_16")
-    draw_target(target, state, 24, "input_24")
+    # draw_target(target, state, 6, "input_06")
+    # draw_target(target, state, 12, "input_12")
+    # draw_target(target, state, 16, "input_16")
+    # draw_target(target, state, 24, "input_24")
 
     colors = [int(max(x)) for x in state.layers]
     vectors = target.clusters.members.vectors[colors]
-    pmatrix = build_proximity_matrix(vectors, vibrance_weighted_delta_e)
-    weights = [
-        target.get_state_weight(state, x) * (max(y) - min(y))
-        for x, y in zip(colors, vectors, strict=True)
-    ]
-    members = Members(vectors, weights=weights, pmatrix=pmatrix)
-    supercluster = Supercluster(members)
 
-    heaviest = _get_dominant(supercluster, min_members=4)
-    heaviest.set_n(4)
+    for boost_delta_h in range(11):
+        boost = boost_delta_h / 10
+        vibrance_weighted_delta_e = ft.partial(new_vibrance_weighted_delta_e, boost)
+        pmatrix = build_proximity_matrix(vectors, vibrance_weighted_delta_e)
+        weights = [
+            target.get_state_weight(state, x) * (max(y) - min(y))
+            for x, y in zip(colors, vectors, strict=True)
+        ]
+        members = Members(vectors, weights=weights, pmatrix=pmatrix)
+        supercluster = Supercluster(members)
 
-    palette = [x.centroid for x in heaviest.clusters]
+        heaviest = _get_dominant(supercluster, min_members=4)
+        heaviest.set_n(4)
 
+        palette = [x.centroid for x in heaviest.clusters]
 
+        def get_contrast(palette_: list[int], color: int) -> float:
+            # return min(pmatrix[color, palette_]) * (max(vectors[color]) - min(vectors[color]))
+            if color in palette_:
+                return 0
+            rgb = supercluster.members.vectors[color]
+            rgbs = supercluster.members.vectors[palette_]
+            hsv = rgb_to_hsv(rgb)
+            hsvs = rgbs_to_hsv(rgbs)
+            vib = max(rgb) - min(rgb)
+            vibs = [max(x) - min(x) for x in rgbs]
+            hsp = [x[0] for x in hsvs]
+            hsc = [hsv[0]] * len(hsp)
+            deltas_h = get_circular_deltas(hsc, hsp) * vibs
+            deltas_e = supercluster.members.pmatrix[color, palette_]
+            scaled = deltas_e * deltas_h
+            return np.mean(scaled) * vib
 
-    def get_contrast(palette_: list[int], color: int) -> float:
-        if color in palette_:
-            return 0
-        rgb = supercluster.members.vectors[color]
-        rgbs = supercluster.members.vectors[palette_]
-        hsv = rgb_to_hsv(rgb)
-        hsvs = rgbs_to_hsv(rgbs)
-        vib = max(rgb) - min(rgb)
-        vibs = [max(x) - min(x) for x in rgbs]
-        hsp = [x[0] for x in hsvs]
-        hsc = [hsv[0]] * len(hsp)
-        deltas_h = get_circular_deltas(hsc, hsp) * vibs
-        deltas_e = supercluster.members.pmatrix[color, palette_]
-        scaled = deltas_e * deltas_h
-        return np.mean(scaled) * vib
+        while len(palette) < 6:
+            free_cols = supercluster.ixs
+            next_color = max(free_cols, key=lambda x: get_contrast(palette, x))
+            palette.append(next_color)
 
+        dist = [1, 1, 1, 1, 1, 1]
 
-    while len(palette) < 6:
-        free_cols = supercluster.ixs
-        next_color = max(free_cols, key=lambda x: get_contrast(palette, x))
-        palette.append(next_color)
+        pvectors = supercluster.members.vectors[palette]
+        color_blocks = sliver_color_blocks(pvectors, list(map(float, dist)))
+        boost_str = f"{boost:.2f}".replace(".", "_")
+        output_name = PALETTES / f"{image_path.stem}_{boost_str}.svg"
 
-    dist = [1, 1, 1, 1, 1, 1]
+        key = (image_path.stem, *tuple(palette))
+        if key not in seen:
+            write_palette(image_path, color_blocks, output_name)
+        seen.add(key)
 
-    pvectors = supercluster.members.vectors[palette]
-    color_blocks = sliver_color_blocks(pvectors, list(map(float, dist)))
-    output_name = paths.WORKING / f"{image_path.stem}.svg"
-
-    write_palette(image_path, color_blocks, output_name)
-
-    seen.add(tuple(palette))
     print(f"{len(palette)=}")
     return palette
 
