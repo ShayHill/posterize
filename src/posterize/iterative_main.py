@@ -73,14 +73,11 @@ class Layers:
     def __init__(
         self,
         colors: Iterable[int],
-        min_delta: float | None = None,
+        min_delta: float,
         layers: IntA | None = None,
     ) -> None:
         self.colors = set(colors)
-        if min_delta is None:
-            self.min_delta = 9
-        else:
-            self.min_delta = min_delta
+        self.min_delta = min_delta
         if layers is None:
             self.layers = np.empty((0, 512), dtype=int)
         else:
@@ -169,9 +166,9 @@ class TargetImage:
         state_image = _merge_layers(*state.layers)
         return float(np.sum(self.weights[state_image == idx]))
 
-    def get_cache_stem(self, state: Layers) -> str:
-        min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
-        return f"{self._path.stem}-{min_delta}"
+    # def get_cache_stem(self, state: Layers) -> str:
+    #     min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
+    #     return f"{self._path.stem}-{min_delta}"
 
     def _get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
@@ -293,11 +290,12 @@ class TargetImage:
             at = 0
 
     def fill_layers(self, state: Layers, num_layers: int):
-        """Add layers (without check_layers) until there are num_layers.
+        """Add layers until there are num_layers. Then check lower layers.
 
-        :param num_layers: the number of layers to add
-        :param layers: the current state or a presumed state
-        :return: layers with num_layers. This does not alter the state.
+        :param state: the Layers instance to be updated.
+        :param num_layers: the number of layers to end up with. Will silently return
+            fewer layers if all colors are exhausted.
+        :effect: update state.layers
         """
         if len(state.layers) == num_layers:
             self.check_layers(state)
@@ -309,15 +307,15 @@ class TargetImage:
         except ColorsExhaustedError:
             self.fill_layers(state, num_layers - 1)
 
-    def append_layer(self, state: Layers, layer: IntA) -> None:
-        """Append a layer to the current state.
+    # def append_layer(self, state: Layers, layer: IntA) -> None:
+    #     """Append a layer to the current state.
 
-        param layer: (m, n) array with a palette index in opaque pixels and -1 in
-            transparent
-        """
-        state.layers = np.append(state.layers, [layer], axis=0)
-        # if len(state.layers) > 2:
-        # self.layers = self.check_layers(state.layers)
+    #     param layer: (m, n) array with a palette index in opaque pixels and -1 in
+    #         transparent
+    #     """
+    #     state.layers = np.append(state.layers, [layer], axis=0)
+    #     # if len(state.layers) > 2:
+    #     # self.layers = self.check_layers(state.layers)
 
     def get_colors(self, state: Layers) -> set[int]:
         """Get available colors in the image."""

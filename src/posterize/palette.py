@@ -148,7 +148,7 @@ def posterize_to_n_colors(
     target, state = posterize(image_path, 12, ixs, 16, ignore_cache=False)
     # draw_target(target, state, 6, "input_06")
     # draw_target(target, state, 12, "input_12")
-    # draw_target(target, state, 16, "input_16")
+    draw_target(target, state, 16, "input_16")
     # draw_target(target, state, 24, "input_24")
 
     colors = [int(max(x)) for x in state.layers]
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
