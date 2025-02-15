@@ -122,6 +122,18 @@ class Layers:
         return Layers(self.colors, self.min_delta, with_hidden)
 
 
+def _get_layer_overlap(array_a: IntA, array_b: IntA) -> float:
+    """Return the percentage of opaque pixels that array_b hides in array_a."""
+    if array_a.shape != array_b.shape:
+        msg = "Both arrays must have the same shape"
+        raise ValueError(msg)
+
+    mask_a = array_a != -1
+    mask_b = array_b != -1
+    overlap = mask_a & mask_b
+    return np.sum(overlap) / np.sum(mask_a)
+
+
 def _merge_layers(
     *layers: IntA,
 ) -> IntA:
