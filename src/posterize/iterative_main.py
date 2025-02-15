@@ -1,7 +1,19 @@
-"""Create a palette with backtracking after each color choicee
+"""Create a palette with backtracking after each color choice.
 
-This is an edit of fast_main, but it's too much of a departure to create without
-tearing fast_main apart.
+Starting from a quantized image, select colors, one by one, that best approximate
+that image. The first color will be a solid layer. Additional layers will have a
+single color index where that color would improve the image, and -1 where it would
+not.
+
+After layers are added, check the original layers and update their colors if it
+improves the approximation. To understand how this would improve an approximation,
+imagine a Japanese flag. The algorithm would begin by selecting a color that
+minimizes the error across the entire image. This would be some shade of pink. The
+second layer would only cover part of the image and would be white or red. Let's say
+it's red. Once red is added, the underlying pink layer is no longer responsible for
+approximating the red circle in the middle of the flag. So the pink layer can be
+updated to white. This saves a third white layer which, combined with the red layer,
+would completely cover the pink layer anyway.
 
 :author: Shay Hill
 :created: 2025-02-06
@@ -302,7 +314,7 @@ class TargetImage:
             return
         try:
             self._fill_layers(state, len(state.layers) + 1)
-            # self.check_layers(state)
+            self.check_layers(state)
             self.fill_layers(state, num_layers)
         except ColorsExhaustedError:
             self.fill_layers(state, num_layers - 1)
