@@ -264,6 +264,7 @@ if __name__ == "__main__":
                 seen=seen,
             )
         except Exception as e:
+            raise e
             pass
 
     print("done")

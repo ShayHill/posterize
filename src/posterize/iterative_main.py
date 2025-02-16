@@ -21,25 +21,21 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
-
 import logging
 from operator import itemgetter
-import numpy as np
 from pathlib import Path
-from typing import Annotated, Iterator, TypeAlias, Iterable, Container
-
+from typing import Annotated, Any, Container, Iterable, Iterator, TypeAlias
 
 import numpy as np
 from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
-import dataclasses
+
 from posterize import paths
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_supercluster_with_quantized_image
-
-from typing import Any
 
 logging.basicConfig(level=logging.INFO)
 
@@ -190,9 +186,9 @@ class TargetImage:
         state_image = _merge_layers(*state.layers)
         return float(np.sum(self.weights[state_image == idx]))
 
-    # def get_cache_stem(self, state: Layers) -> str:
-    #     min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
-    #     return f"{self._path.stem}-{min_delta}"
+    def get_cache_stem(self, state: Layers) -> str:
+        min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
+        return f"{self._path.stem}-{min_delta}"
 
     def _get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
@@ -205,11 +201,13 @@ class TargetImage:
         This should decrease after every append.
         """
         state = _merge_layers(*layers)
-        if -1 in state:
-            msg = "There are still transparent pixels in the state."
-            raise ValueError(msg)
+        filled = np.where(state != -1)
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
-        return self.pmatrix[image, state] * self.weights
+        cost_matrix = np.full_like(state, np.inf, dtype=float)
+        cost_matrix[filled] = (
+            self.pmatrix[image[filled], state[filled]] * self.weights[filled]
+        )
+        return cost_matrix
 
     def get_cost(self, *layers: IntA) -> float:
         """Get the cost between self.image and state with layers applied.
@@ -313,6 +311,59 @@ class TargetImage:
             return
             at = 0
 
+    def get_contributions(self, *layers: IntA) -> IntA:
+        """Return the number of pixels each layer contributes to the image."""
+        colors = [int(np.max(x)) for x in layers]
+        # if -1 in colors:
+        #     msg = "There are still transparent pixels in the state."
+        #     raise ValueError(msg)
+        image = _merge_layers(*layers)
+        bincount = np.bincount(image[np.where(image != -1)])
+        return np.array([bincount[x] for x in colors])
+
+    def get_intersections(self, *layers: IntA) -> IntA:
+        """Return the number of pixels in each layer covered by the last layer."""
+        if len(layers) < 2:
+            return np.array([])
+        colors = [np.max(x) for x in layers]
+        image = _merge_layers(*layers[:-1])
+        return np.array([np.sum((image == x) * (layers[-1] != -1)) for x in colors])
+
+    def get_coverage(self, state: Layers) -> float:
+        """Return the percentage of each layer covered by other layers."""
+        image = _merge_layers(*state.layers)
+        layer_masks = np.where(state.layers != -1, 1, 0)
+        image_masks = np.array([np.where(image == x, 1, 0) for x in state.layer_colors])
+        weight_in_layer = np.sum(layer_masks * self.weights, axis=1)
+        weight_in_image = np.sum(image_masks * self.weights, axis=1)
+        return 1 - weight_in_image / weight_in_layer
+
+    def _add_one(self, state: Layers):
+        """Add one layer to the state."""
+        len_in = len(state.layers)
+        new_layer = self.get_best_candidate(state)
+        if len(state.layers) == 0:
+            state.layers = np.append(state.layers, [new_layer], axis=0)
+            return
+        contributions = self.get_contributions(*state.layers, new_layer)
+        intersections = self.get_intersections(*state.layers, new_layer)
+
+        # drop = (contributions <= contributions[-1]) * (intersections > 0)
+        # drop = coverage > 0.5
+
+        # state.layers = state.layers[np.where(~drop[:-1])]
+
+        state.layers = np.append(state.layers, [new_layer], axis=0)
+        coverage = self.get_coverage(state)
+        keep = coverage < 0.1
+        state.layers = state.layers[np.where(keep)]
+        # breakpoint()
+        # while len(state.layers) < len_in:
+        #     new_layer = self.get_best_candidate(state)
+        #     state.layers = np.append(state.layers, [new_layer], axis=0)
+
+        print(f"added one {(len(state.layers) - len_in)=}")
+
     def fill_layers(self, state: Layers, num_layers: int):
         """Add layers until there are num_layers. Then check lower layers.
 
@@ -321,15 +372,20 @@ class TargetImage:
             fewer layers if all colors are exhausted.
         :effect: update state.layers
         """
-        if len(state.layers) == num_layers:
-            self.check_layers(state)
-            return
-        try:
-            self._fill_layers(state, len(state.layers) + 1)
-            self.check_layers(state)
-            self.fill_layers(state, num_layers)
-        except ColorsExhaustedError:
-            self.fill_layers(state, num_layers - 1)
+        while len(state.layers) < num_layers:
+            self._add_one(state)
+
+        # if len(state.layers) > 3:
+        #     self.get_contributions(state)
+        # if len(state.layers) == num_layers:
+        #     self.check_layers(state)
+        #     return
+        # try:
+        #     self._fill_layers(state, len(state.layers) + 1)
+        #     self.check_layers(state)
+        #     self.fill_layers(state, num_layers)
+        # except ColorsExhaustedError:
+        #     self.fill_layers(state, num_layers - 1)
 
     # def append_layer(self, state: Layers, layer: IntA) -> None:
     #     """Append a layer to the current state.
@@ -362,8 +418,8 @@ class TargetImage:
         available_colors = self.get_colors(state)
         if not available_colors:
             raise ColorsExhaustedError
-        candidates = (self.new_candidate_layer(state, x) for x in available_colors)
-        scored = ((self.get_cost(*state.layers, x), x) for x in candidates)
+        candidates = [self.new_candidate_layer(state, x) for x in available_colors]
+        scored = [(self.get_cost(*state.layers, x), x) for x in candidates]
         winner = min(scored, key=itemgetter(0))[1]
         return winner
 
