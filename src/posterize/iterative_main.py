@@ -64,6 +64,24 @@ class Supercluster(SuperclusterBase):
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
 
+def _merge_layers(
+    *layers: IntA,
+) -> IntA:
+    """Merge layers into a single layer.
+
+    :param layers: (n, c) array of n layers, each containing a value (color index)
+        for each color index. These will all be the same color or -1 for colors that
+        are transparent in each layer.
+    :return: one (c,) array with the last non-transparent color in each position
+
+    Where an image is a (rows, cols) array of indices--usually in (0, 511)--each
+    layer of an approximation will color some of those indices with one palette index
+    per layer, and others with -1 for transparency.
+    """
+    merged = layers[0].copy()
+    for layer in layers[1:]:
+        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
+    return merged
 
 @dataclasses.dataclass
 class ImageApproximation:
@@ -108,8 +126,19 @@ class ImageApproximation:
         """Get the color of a layer."""
         return int(np.max(self.layers[index]))
 
+    def get_state_weight(self, idx: int) -> float:
+        """Get the combined weight of all colors approximated by a color index.
+
+        Each quantixed image (self.image) will have 512 color indices. An
+        approximation is built from a subset of these indices. For each index in that
+        subset, this method will return the sum of the weights of all pixels in the
+        quantized image that are approximated by that index.
+        """
+        state_image = _merge_layers(*self.layers)
+        return float(np.sum(self.target.weights[state_image == idx]))
+
     def get_available_colors(self) -> list[int]:
-        """Get available colors in the image.
+        """Get available colors in the i.wmage.
 
         The available colors will depend on three things:
         1. The 512 colors in the quantized image
@@ -124,24 +153,6 @@ class ImageApproximation:
         return [ x for x in self.colors if min(layer_prox[x]) > self.min_delta ]
 
 
-def _merge_layers(
-    *layers: IntA,
-) -> IntA:
-    """Merge layers into a single layer.
-
-    :param layers: (n, c) array of n layers, each containing a value (color index)
-        for each color index. These will all be the same color or -1 for colors that
-        are transparent in each layer.
-    :return: one (c,) array with the last non-transparent color in each position
-
-    Where an image is a (rows, cols) array of indices--usually in (0, 511)--each
-    layer of an approximation will color some of those indices with one palette index
-    per layer, and others with -1 for transparency.
-    """
-    merged = layers[0].copy()
-    for layer in layers[1:]:
-        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
-    return merged
 
 
 class TargetImage:
@@ -175,16 +186,6 @@ class TargetImage:
         """Shorthand for self.clusters.members.weights."""
         return self.clusters.members.weights
 
-    def get_state_weight(self, state: ImageApproximation, idx: int) -> float:
-        """Get the combined weight of all colors approximated by a color index.
-
-        Each quantixed image (self.image) will have 512 color indices. An
-        approximation is built from a subset of these indices. For each index in that
-        subset, this method will return the sum of the weights of all pixels in the
-        quantized image that are approximated by that index.
-        """
-        state_image = _merge_layers(*state.layers)
-        return float(np.sum(self.weights[state_image == idx]))
 
     def get_cache_stem(self, state: ImageApproximation) -> str:
         min_delta = f"{state.min_delta:05.2f}".replace(".", "_")

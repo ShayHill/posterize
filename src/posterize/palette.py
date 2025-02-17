@@ -159,7 +159,7 @@ def posterize_to_n_colors(
         vibrance_weighted_delta_e = ft.partial(new_vibrance_weighted_delta_e, boost)
         pmatrix = build_proximity_matrix(vectors, vibrance_weighted_delta_e)
         weights = [
-            target.get_state_weight(state, x) * (max(y) - min(y))
+            state.get_state_weight(x) * (max(y) - min(y))
             for x, y in zip(colors, vectors, strict=True)
         ]
         members = Members(vectors, weights=weights, pmatrix=pmatrix)
