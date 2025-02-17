@@ -25,6 +25,7 @@ import dataclasses
 import functools
 import logging
 from operator import itemgetter
+import itertools as it
 from pathlib import Path
 from typing import Annotated, Any, Container, Iterable, Iterator, TypeAlias
 
@@ -100,34 +101,6 @@ class Layers:
     def get_layer_color(self, index: int) -> int:
         """Get the color of a layer."""
         return np.max(self.layers[index])
-
-    def with_layer_hidden(self, index: int) -> Layers:
-        """Hide a layer by matching its color to the next layer."""
-        if len(self.layers) == 1:
-            msg = "Cannot hide a single layer."
-            raise ValueError(msg)
-        if index >= len(self.layers) - 1:
-            msg = "Cannot hide the last layer."
-            raise ValueError(msg)
-        if index < 0:
-            msg = "Cannot use negative index to hide a layer."
-            raise ValueError(msg)
-        with_hidden = self.layers.copy()
-        mask_color = self.get_layer_color(index + 1)
-        with_hidden[index] = np.where(self.layers[index] == -1, -1, mask_color)
-        return Layers(self.colors, self.min_delta, with_hidden)
-
-
-def _get_layer_overlap(array_a: IntA, array_b: IntA) -> float:
-    """Return the percentage of opaque pixels that array_b hides in array_a."""
-    if array_a.shape != array_b.shape:
-        msg = "Both arrays must have the same shape"
-        raise ValueError(msg)
-
-    mask_a = array_a != -1
-    mask_b = array_b != -1
-    overlap = mask_a & mask_b
-    return np.sum(overlap) / np.sum(mask_a)
 
 
 def _merge_layers(
@@ -225,7 +198,7 @@ class TargetImage:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
-        :param state_layers: the current state or a presumed state
+        :param state: a Layers instance
 
         A candidate is the current state with state indices replaced with
         palette_index where palette_index has a lower cost that the index in state at
@@ -239,10 +212,7 @@ class TargetImage:
 
         solid_cost_matrix = self._get_cost_matrix(solid)
         state_cost_matrix = self._get_cost_matrix(*state.layers)
-
-        layer = np.full(self.pmatrix.shape[0], -1)
-        layer[np.where(state_cost_matrix > solid_cost_matrix)] = palette_index
-        return layer
+        return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
     def append_color(self, state: Layers, *palette_indices: int):
         """Append a color to the current state.
@@ -257,79 +227,11 @@ class TargetImage:
         state.layers = np.append(state.layers, [new_layer], axis=0)
         self.append_color(state, *palette_indices[1:])
 
-    def find_layer_substitute(self, state: Layers, index: int) -> tuple[int, float]:
-        """Find a substitute color for a layer.
+    # ===============================================================================
+    #   Select colors, remove partially hidden lower layers as needed
+    # ===============================================================================
 
-        :param state: Layers instance
-        :param index: the index of the layer to find a substitute for. This can only
-            work if the index is less than len(layers) - 1.
-        :return: the index of the substitute color and the delta between the
-            substitute and the original color
-        """
-        this_color = max(state.layers[index])
-        candidate = self.get_best_candidate(state.with_layer_hidden(index))
-        candidate_color = max(candidate)
-        if this_color == candidate_color:
-            return candidate_color, 0
-        return candidate_color, float(self.pmatrix[this_color, candidate_color])
-
-    def _fill_layers(self, state: Layers, num_layers: int):
-        """Add layers (without check_layers) until there are num_layers.
-
-        :param num_layers: the number of layers to add
-        :param layers: the current state or a presumed state
-        :return: layers with num_layers. This does not alter the state.
-        """
-        while len(state.layers) < num_layers:
-            new_layer = self.get_best_candidate(state)
-            state.layers = np.append(state.layers, [new_layer], axis=0)
-
-    def check_layers(self, state: Layers):
-        key = tuple(map(int, state.layer_colors))
-        if key in state.cached_states:
-            candidates = (
-                x for x in state.cached_states.items() if len(x[0]) == len(key)
-            )
-            best = min(candidates, key=itemgetter(1))[0]
-            state.layers = state.layers[:0]
-            self.append_color(state, *best)
-            return
-
-        state.cached_states[key] = self.get_cost(*state.layers)
-        at: int = 0
-        while at < len(state.layers) - 1:
-            new_color, delta_e = self.find_layer_substitute(state, at)
-            if delta_e == 0:  # no benefit to changing color
-                at += 1
-                continue
-
-            print(f"color mismatch {at=} {len(state.layers)=}")
-            state.layers = state.layers[:at]
-            self.append_color(state, new_color)
-            self._fill_layers(state, len(key))
-            self.check_layers(state)
-            return
-            at = 0
-
-    def get_contributions(self, *layers: IntA) -> IntA:
-        """Return the number of pixels each layer contributes to the image."""
-        colors = [int(np.max(x)) for x in layers]
-        # if -1 in colors:
-        #     msg = "There are still transparent pixels in the state."
-        #     raise ValueError(msg)
-        image = _merge_layers(*layers)
-        bincount = np.bincount(image[np.where(image != -1)])
-        return np.array([bincount[x] for x in colors])
-
-    def get_intersections(self, *layers: IntA) -> IntA:
-        """Return the number of pixels in each layer covered by the last layer."""
-        if len(layers) < 2:
-            return np.array([])
-        colors = [np.max(x) for x in layers]
-        image = _merge_layers(*layers[:-1])
-        return np.array([np.sum((image == x) * (layers[-1] != -1)) for x in colors])
-
-    def get_coverage(self, state: Layers) -> float:
+    def _get_hiddenness_per_layer(self, state: Layers) -> float:
         """Return the percentage of each layer covered by other layers."""
         image = _merge_layers(*state.layers)
         layer_masks = np.where(state.layers != -1, 1, 0)
@@ -338,67 +240,53 @@ class TargetImage:
         weight_in_image = np.sum(image_masks * self.weights, axis=1)
         return 1 - weight_in_image / weight_in_layer
 
-    def _add_one(self, state: Layers):
+    def _add_one_layer(self, state: Layers, max_hidden: float):
         """Add one layer to the state."""
-        len_in = len(state.layers)
         new_layer = self.get_best_candidate(state)
-        if len(state.layers) == 0:
-            state.layers = np.append(state.layers, [new_layer], axis=0)
-            return
-        contributions = self.get_contributions(*state.layers, new_layer)
-        intersections = self.get_intersections(*state.layers, new_layer)
-
-        # drop = (contributions <= contributions[-1]) * (intersections > 0)
-        # drop = coverage > 0.5
-
-        # state.layers = state.layers[np.where(~drop[:-1])]
-
         state.layers = np.append(state.layers, [new_layer], axis=0)
-        coverage = self.get_coverage(state)
-        keep = coverage < 0.1
+        if len(state.layers) == 0 or max_hidden >= 1:
+            return
+        keep = self._get_hiddenness_per_layer(state) < max_hidden
         state.layers = state.layers[np.where(keep)]
-        # breakpoint()
-        # while len(state.layers) < len_in:
-        #     new_layer = self.get_best_candidate(state)
-        #     state.layers = np.append(state.layers, [new_layer], axis=0)
 
-        print(f"added one {(len(state.layers) - len_in)=}")
-
-    def fill_layers(self, state: Layers, num_layers: int):
+    def fill_layers(
+        self, state: Layers, num_layers: int, max_hidden: float = 1
+    ) -> None:
         """Add layers until there are num_layers. Then check lower layers.
 
         :param state: the Layers instance to be updated.
         :param num_layers: the number of layers to end up with. Will silently return
             fewer layers if all colors are exhausted.
+        :param max_hidden: the maximum percentage of a layer that can be covered by
+            other layers. If more than this is hidde, the layer will be removed and
+            replaced with another layer on top of the layer stack.
         :effect: update state.layers
         """
-        while len(state.layers) < num_layers:
-            self._add_one(state)
+        for i in it.count():
+            if len(state.layers) >= num_layers:
+                return
+            if i == 999:
+                max_hidden += 0.1
+                logging.log(logging.INFO, f"increasing max_hidden: {max_hidden}")
+                return self.fill_layers(state, num_layers, max_hidden + 0.1)
+            try:
+                self._add_one_layer(state, len(state.layers) + 1)
+            except ColorsExhaustedError:
+                logging.log(logging.INFO, "colors exhausted. decreasing num_layers")
+                return self.fill_layers(state, num_layers - 1, max_hidden)
 
-        # if len(state.layers) > 3:
-        #     self.get_contributions(state)
-        # if len(state.layers) == num_layers:
-        #     self.check_layers(state)
-        #     return
-        # try:
-        #     self._fill_layers(state, len(state.layers) + 1)
-        #     self.check_layers(state)
-        #     self.fill_layers(state, num_layers)
-        # except ColorsExhaustedError:
-        #     self.fill_layers(state, num_layers - 1)
+    # ===============================================================================
+    #   Define and select new candidate layers
+    # ===============================================================================
 
-    # def append_layer(self, state: Layers, layer: IntA) -> None:
-    #     """Append a layer to the current state.
+    def get_available_colors(self, state: Layers) -> set[int]:
+        """Get available colors in the image.
 
-    #     param layer: (m, n) array with a palette index in opaque pixels and -1 in
-    #         transparent
-    #     """
-    #     state.layers = np.append(state.layers, [layer], axis=0)
-    #     # if len(state.layers) > 2:
-    #     # self.layers = self.check_layers(state.layers)
-
-    def get_colors(self, state: Layers) -> set[int]:
-        """Get available colors in the image."""
+        The available colors will depend on three things:
+        1. The 512 colors in the quantized image
+        2. The colors used in previous layers
+        3. The min_delta defined for the current state
+        """
         if len(state.layers) == 0:
             return state.colors
         layer_colors = state.layer_colors
@@ -415,7 +303,7 @@ class TargetImage:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        available_colors = self.get_colors(state)
+        available_colors = self.get_available_colors(state)
         if not available_colors:
             raise ColorsExhaustedError
         candidates = [self.new_candidate_layer(state, x) for x in available_colors]
