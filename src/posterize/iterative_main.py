@@ -64,6 +64,7 @@ class Supercluster(SuperclusterBase):
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
 
+
 def _merge_layers(
     *layers: IntA,
 ) -> IntA:
@@ -82,6 +83,7 @@ def _merge_layers(
     for layer in layers[1:]:
         merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
     return merged
+
 
 @dataclasses.dataclass
 class ImageApproximation:
@@ -132,7 +134,7 @@ class ImageApproximation:
         Each quantixed image (self.image) will have 512 color indices. An
         approximation is built from a subset of these indices. For each index in that
         subset, this method will return the sum of the weights of all pixels in the
-        quantized image that are approximated by that index.
+        quantized image that are approximated by that indjx.
         """
         state_image = _merge_layers(*self.layers)
         return float(np.sum(self.target.weights[state_image == idx]))
@@ -149,11 +151,101 @@ class ImageApproximation:
             return list(self.colors)
         layer_colors = self.layer_colors
         assert -1 not in layer_colors
-        layer_prox = self.target.pmatrix[:,layer_colors]
-        return [ x for x in self.colors if min(layer_prox[x]) > self.min_delta ]
+        layer_prox = self.target.pmatrix[:, layer_colors]
+        return [x for x in self.colors if min(layer_prox[x]) > self.min_delta]
 
+    def _get_hiddenness_per_layer(self) -> float:
+        """Return the percentage of each layer covered by other layers."""
+        image = _merge_layers(*self.layers)
+        layer_masks = np.where(self.layers != -1, 1, 0)
+        image_masks = np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
+        weight_in_layer = np.sum(layer_masks * self.target.weights, axis=1)
+        weight_in_image = np.sum(image_masks * self.target.weights, axis=1)
+        return 1 - weight_in_image / weight_in_layer
 
+    def _add_one_layer(self, max_hidden: float):
+        """Add one layer to the state."""
+        new_layer = self.get_best_candidate_layer()
+        self.layers = np.append(self.layers, [new_layer], axis=0)
+        if len(self.layers) < 2 or max_hidden >= 1:
+            return
+        keep = self._get_hiddenness_per_layer() < max_hidden
+        self.layers = self.layers[np.where(keep)]
 
+    def fill_layers(self, num_layers: int, max_hidden: float = 1) -> None:
+        """Add layers until there are num_layers. Then check lower layers.
+
+        :param state: the ImageApproximation instance to be updated.
+        :param num_layers: the number of layers to end up with. Will silently return
+            fewer layers if all colors are exhausted.
+        :param max_hidden: the maximum percentage of a layer that can be covered by
+            other layers. If more than this is hidde, the layer will be removed and
+            replaced with another layer on top of the layer stack.
+        :effect: update state.layers
+        """
+        for i in it.count():
+            if len(self.layers) >= num_layers:
+                return
+            if i == 999:
+                max_hidden += 0.1
+                logging.log(logging.INFO, f"increasing max_hidden: {max_hidden}")
+                return self.fill_layers(num_layers, max_hidden + 0.1)
+            try:
+                self._add_one_layer(max_hidden)
+            except ColorsExhaustedError:
+                logging.log(logging.INFO, "colors exhausted. decreasing num_layers")
+                return self.fill_layers(num_layers - 1, max_hidden)
+
+    # ===============================================================================
+    #   Define and select new candidate layers
+    # ===============================================================================
+
+    def _new_candidate_layer( self, palette_index: int) -> IntA:
+        """Create a new candidate state.
+
+        :param palette_index: the index of the color to use in the new layer
+        :param state: a ImageApproximation instance
+
+        A candidate is the current state with state indices replaced with
+        palette_index where palette_index has a lower cost that the index in state at
+        that position.
+
+        If there are no layers, the candidate will be a solid color.
+        """
+        solid = np.full(self.target.pmatrix.shape[0], palette_index)
+        if len(self.layers) == 0:
+            return solid
+
+        solid_cost_matrix = self.target.get_cost_matrix(solid)
+        state_cost_matrix = self.target.get_cost_matrix(*self.layers)
+        return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
+
+    def append_color(self, *palette_indices: int):
+        """Append a color to the current state.
+
+        :param layers: the current state or a presumed state
+        :param palette_indices: the index of the color to use in the new layer.
+            Multiple args allowed.
+        """
+        if not palette_indices:
+            return
+        new_layer = self._new_candidate_layer(palette_indices[0])
+        self.layers = np.append(self.layers, [new_layer], axis=0)
+        self.append_color(*palette_indices[1:])
+
+    def get_best_candidate_layer(self) -> IntA:
+        """Get the best candidate layer to add to layers.
+
+        :param state_layers: the current state or a presumed state
+        :return: the candidate layer with the lowest cost
+        """
+        available_colors = self.get_available_colors()
+        if not available_colors:
+            raise ColorsExhaustedError
+        candidates = [self._new_candidate_layer(x) for x in available_colors]
+        scored = [(self.target.get_cost(*self.layers, x), x) for x in candidates]
+        winner = min(scored, key=itemgetter(0))[1]
+        return winner
 
 class TargetImage:
     """A type to store input images and evaluate approximation costs."""
@@ -186,12 +278,11 @@ class TargetImage:
         """Shorthand for self.clusters.members.weights."""
         return self.clusters.members.weights
 
-
     def get_cache_stem(self, state: ImageApproximation) -> str:
         min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
         return f"{self._path.stem}-{min_delta}"
 
-    def _get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
+    def get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -219,109 +310,10 @@ class TargetImage:
         """
         if not layers:
             raise ValueError("At least one layer is required.")
-        cost_matrix = self._get_cost_matrix(*layers)
+        cost_matrix = self.get_cost_matrix(*layers)
         return float(np.sum(cost_matrix))
 
-    # ===============================================================================
-    #   Select colors, remove partially hidden lower layers as needed
-    # ===============================================================================
 
-    def _get_hiddenness_per_layer(self, state: ImageApproximation) -> float:
-        """Return the percentage of each layer covered by other layers."""
-        image = _merge_layers(*state.layers)
-        layer_masks = np.where(state.layers != -1, 1, 0)
-        image_masks = np.array([np.where(image == x, 1, 0) for x in state.layer_colors])
-        weight_in_layer = np.sum(layer_masks * self.weights, axis=1)
-        weight_in_image = np.sum(image_masks * self.weights, axis=1)
-        return 1 - weight_in_image / weight_in_layer
-
-    def _add_one_layer(self, state: ImageApproximation, max_hidden: float):
-        """Add one layer to the state."""
-        new_layer = self.get_best_candidate(state)
-        state.layers = np.append(state.layers, [new_layer], axis=0)
-        if len(state.layers) == 0 or max_hidden >= 1:
-            return
-        keep = self._get_hiddenness_per_layer(state) < max_hidden
-        state.layers = state.layers[np.where(keep)]
-
-    def fill_layers(
-        self, state: ImageApproximation, num_layers: int, max_hidden: float = 1
-    ) -> None:
-        """Add layers until there are num_layers. Then check lower layers.
-
-        :param state: the ImageApproximation instance to be updated.
-        :param num_layers: the number of layers to end up with. Will silently return
-            fewer layers if all colors are exhausted.
-        :param max_hidden: the maximum percentage of a layer that can be covered by
-            other layers. If more than this is hidde, the layer will be removed and
-            replaced with another layer on top of the layer stack.
-        :effect: update state.layers
-        """
-        for i in it.count():
-            if len(state.layers) >= num_layers:
-                return
-            if i == 999:
-                max_hidden += 0.1
-                logging.log(logging.INFO, f"increasing max_hidden: {max_hidden}")
-                return self.fill_layers(state, num_layers, max_hidden + 0.1)
-            try:
-                self._add_one_layer(state, len(state.layers) + 1)
-            except ColorsExhaustedError:
-                logging.log(logging.INFO, "colors exhausted. decreasing num_layers")
-                return self.fill_layers(state, num_layers - 1, max_hidden)
-
-    # ===============================================================================
-    #   Define and select new candidate layers
-    # ===============================================================================
-
-    def _new_candidate_layer(
-        self, state: ImageApproximation, palette_index: int
-    ) -> IntA:
-        """Create a new candidate state.
-
-        :param palette_index: the index of the color to use in the new layer
-        :param state: a ImageApproximation instance
-
-        A candidate is the current state with state indices replaced with
-        palette_index where palette_index has a lower cost that the index in state at
-        that position.
-
-        If there are no layers, the candidate will be a solid color.
-        """
-        solid = np.full(self.pmatrix.shape[0], palette_index)
-        if len(state.layers) == 0:
-            return solid
-
-        solid_cost_matrix = self._get_cost_matrix(solid)
-        state_cost_matrix = self._get_cost_matrix(*state.layers)
-        return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
-
-    def append_color(self, state: ImageApproximation, *palette_indices: int):
-        """Append a color to the current state.
-
-        :param layers: the current state or a presumed state
-        :param palette_indices: the index of the color to use in the new layer.
-            Multiple args allowed.
-        """
-        if not palette_indices:
-            return
-        new_layer = self._new_candidate_layer(state, palette_indices[0])
-        state.layers = np.append(state.layers, [new_layer], axis=0)
-        self.append_color(state, *palette_indices[1:])
-
-    def get_best_candidate(self, state: ImageApproximation) -> IntA:
-        """Get the best candidate layer to add to layers.
-
-        :param state_layers: the current state or a presumed state
-        :return: the candidate layer with the lowest cost
-        """
-        available_colors = state.get_available_colors()
-        if not available_colors:
-            raise ColorsExhaustedError
-        candidates = [self._new_candidate_layer(state, x) for x in available_colors]
-        scored = [(self.get_cost(*state.layers, x), x) for x in candidates]
-        winner = min(scored, key=itemgetter(0))[1]
-        return winner
 
 
 def _expand_layers(
@@ -403,14 +395,13 @@ def posterize(
     ignore_cache = True
 
     target = TargetImage(image_path)
-
     state = ImageApproximation(target, bite_size)
 
     cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
         target.layers = np.load(cache_path)
     else:
-        target.fill_layers(state, num_cols or 1)
+        state.fill_layers(num_cols or 1, .1)
 
     np.save(cache_path, state.layers)
 
