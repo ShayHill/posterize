@@ -102,11 +102,26 @@ class ImageApproximation:
     @property
     def layer_colors(self) -> list[int]:
         """Get the non-transparent color in each layer."""
-        return [np.max(x) for x in self.layers]
+        return [int(np.max(x)) for x in self.layers]
 
     def get_layer_color(self, index: int) -> int:
         """Get the color of a layer."""
-        return np.max(self.layers[index])
+        return int(np.max(self.layers[index]))
+
+    def get_available_colors(self) -> list[int]:
+        """Get available colors in the image.
+
+        The available colors will depend on three things:
+        1. The 512 colors in the quantized image
+        2. The colors used in previous layers
+        3. The min_delta defined for the current state
+        """
+        if len(self.layers) == 0:
+            return list(self.colors)
+        layer_colors = self.layer_colors
+        assert -1 not in layer_colors
+        layer_prox = self.target.pmatrix[:,layer_colors]
+        return [ x for x in self.colors if min(layer_prox[x]) > self.min_delta ]
 
 
 def _merge_layers(
@@ -206,7 +221,6 @@ class TargetImage:
         cost_matrix = self._get_cost_matrix(*layers)
         return float(np.sum(cost_matrix))
 
-
     # ===============================================================================
     #   Select colors, remove partially hidden lower layers as needed
     # ===============================================================================
@@ -259,25 +273,9 @@ class TargetImage:
     #   Define and select new candidate layers
     # ===============================================================================
 
-    def get_available_colors(self, state: ImageApproximation) -> set[int]:
-        """Get available colors in the image.
-
-        The available colors will depend on three things:
-        1. The 512 colors in the quantized image
-        2. The colors used in previous layers
-        3. The min_delta defined for the current state
-        """
-        if len(state.layers) == 0:
-            return state.colors
-        layer_colors = state.layer_colors
-        assert -1 not in state.layer_colors
-        return {
-            int(x)
-            for x in state.colors
-            if min(self.pmatrix[x, layer_colors]) > state.min_delta
-        }
-
-    def _new_candidate_layer(self, state: ImageApproximation, palette_index: int) -> IntA:
+    def _new_candidate_layer(
+        self, state: ImageApproximation, palette_index: int
+    ) -> IntA:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -316,7 +314,7 @@ class TargetImage:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        available_colors = self.get_available_colors(state)
+        available_colors = state.get_available_colors()
         if not available_colors:
             raise ColorsExhaustedError
         candidates = [self._new_candidate_layer(state, x) for x in available_colors]
@@ -341,7 +339,10 @@ def _expand_layers(
 
 
 def draw_target(
-    target: TargetImage, state: ImageApproximation, num_cols: int | None = None, stem: str = ""
+    target: TargetImage,
+    state: ImageApproximation,
+    num_cols: int | None = None,
+    stem: str = "",
 ) -> None:
     """Infer a name from TargetImage args and write image to file.
 
