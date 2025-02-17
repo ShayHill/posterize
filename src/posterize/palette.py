@@ -8,7 +8,7 @@ import functools as ft
 import logging
 import numpy as np
 from pathlib import Path
-from posterize.iterative_main import Supercluster, posterize, TargetImage, draw_target
+from posterize.iterative_main import Supercluster, posterize, TargetImage, draw_approximation
 
 from palette_image.svg_display import write_palette
 from palette_image.color_block_ops import sliver_color_blocks
@@ -146,10 +146,10 @@ def posterize_to_n_colors(
     print(f"{image_path.stem} {min_dist}")
 
     target, state = posterize(image_path, 12, ixs, 16, ignore_cache=False)
-    # draw_target(target, state, 6, "input_06")
-    # draw_target(target, state, 12, "input_12")
-    draw_target(target, state, 16, "input_16")
-    # draw_target(target, state, 24, "input_24")
+    # draw_approximation(state, 6, "input_06")
+    # draw_approximation(state, 12, "input_12")
+    draw_approximation(state, 16, "input_16")
+    # draw_approximation(state, 24, "input_24")
 
     colors = [int(max(x)) for x in state.layers]
     vectors = target.clusters.members.vectors[colors]

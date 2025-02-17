@@ -247,6 +247,10 @@ class ImageApproximation:
         winner = min(scored, key=itemgetter(0))[1]
         return winner
 
+    def get_cache_stem(self) -> str:
+        min_delta = f"{self.min_delta:05.2f}".replace(".", "_")
+        return f"{self.target.path.stem}-{min_delta}"
+
 class TargetImage:
     """A type to store input images and evaluate approximation costs."""
 
@@ -258,7 +262,7 @@ class TargetImage:
 
         :param path: path to the image
         """
-        self._path = path
+        self.path = path
         self.clusters, self.image = new_supercluster_with_quantized_image(
             Supercluster, path
         )
@@ -278,9 +282,6 @@ class TargetImage:
         """Shorthand for self.clusters.members.weights."""
         return self.clusters.members.weights
 
-    def get_cache_stem(self, state: ImageApproximation) -> str:
-        min_delta = f"{state.min_delta:05.2f}".replace(".", "_")
-        return f"{self._path.stem}-{min_delta}"
 
     def get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
@@ -331,23 +332,21 @@ def _expand_layers(
     return np.array([x[quantized_image] for x in d1_layers])
 
 
-def draw_target(
-    target: TargetImage,
+def draw_approximation(
     state: ImageApproximation,
     num_cols: int | None = None,
     stem: str = "",
 ) -> None:
-    """Infer a name from TargetImage args and write image to file.
+    """Infer a name from the state and draw the approximation.
 
     This is for debugging how well image is visually represented and what colors
     might be "eating" others in the image.
     """
-    vectors = target.vectors
-    stem_parts = (target.get_cache_stem(state), len(state.layers), num_cols, stem)
+    stem_parts = (state.get_cache_stem(), len(state.layers), num_cols, stem)
     output_stem = "-".join(_stemize(*stem_parts))
 
-    big_layers = _expand_layers(target.image, state.layers)
-    draw_posterized_image(vectors, big_layers[:num_cols], output_stem)
+    big_layers = _expand_layers(state.target.image, state.layers)
+    draw_posterized_image(state.target.vectors, big_layers[:num_cols], output_stem)
 
 
 def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
