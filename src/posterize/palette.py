@@ -145,7 +145,8 @@ def posterize_to_n_colors(
 
     print(f"{image_path.stem} {min_dist}")
 
-    target, state = posterize(image_path, 12, ixs, 16, ignore_cache=False)
+    state = posterize(image_path, 12, 16, ignore_cache=False)
+    target = state.target
     # draw_approximation(state, 6, "input_06")
     # draw_approximation(state, 12, "input_12")
     draw_approximation(state, 16, "input_16")

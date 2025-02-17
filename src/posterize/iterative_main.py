@@ -377,40 +377,41 @@ def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path
 
 def posterize(
     image_path: Path,
-    bite_size: float,
-    ixs: npt.ArrayLike | None = None,
-    num_cols: int | None = None,
+    min_delta: float,
+    num_cols: int,
     *,
     ignore_cache: bool = True,
-) -> tuple[TargetImage, ImageApproximation]:
+) -> ImageApproximation:
     """Posterize an image.
 
     :param image_path: path to the image
-    :param bite_size: the max average error of the cluster removed for each color
-    :param ixs: optionally pass a subset of the palette indices to use. This is used
-        with bite_size == 0 to generate an image with exactly the colors in ixs.
+    :param min_delta: the minimum delta_e between colors in the final image. This
+        will be lowered if necessary to achieve the desired number of colors.
+    :param num_cols: the number of colors in the posterization image
     :return: posterized image
     """
     ignore_cache = True
 
     target = TargetImage(image_path)
-    state = ImageApproximation(target, bite_size)
+    cache_path = _new_cache_path(image_path, min_delta, num_cols, suffix=".npy")
 
-    cache_path = _new_cache_path(image_path, bite_size, num_cols, suffix=".npy")
     if cache_path.exists() and not ignore_cache:
-        target.layers = np.load(cache_path)
+        state = ImageApproximation(target, min_delta, layers = np.load(cache_path))
     else:
-        state.fill_layers(num_cols or 1, .1)
+        state = ImageApproximation(target, min_delta)
+    state.fill_layers(num_cols, .1)
+
+    state = ImageApproximation(target, min_delta, state.layer_colors)
+    state.fill_layers(num_cols)
 
     np.save(cache_path, state.layers)
 
-    if len(state.layers) < (num_cols or 1):
+    if len(state.layers) < num_cols:
         return posterize(
             image_path,
-            max(bite_size - 1, 0),
-            ixs,
+            max(min_delta - 1, 0),
             num_cols,
             ignore_cache=ignore_cache,
         )
 
-    return target, state
+    return state
