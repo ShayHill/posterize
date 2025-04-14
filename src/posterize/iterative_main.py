@@ -167,10 +167,11 @@ class ImageApproximation:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.append(self.layers, [new_layer], axis=0)
-        if len(self.layers) < 2 or max_hidden >= 1:
-            return
-        keep = self._get_hiddenness_per_layer() < max_hidden
-        self.layers = self.layers[np.where(keep)]
+        print(f"added layer: {len(self.layers)}")
+        # if len(self.layers) < 2 or max_hidden >= 1:
+        #     return
+        # keep = self._get_hiddenness_per_layer() < max_hidden
+        # self.layers = self.layers[np.where(keep)]
 
     def fill_layers(self, num_layers: int, max_hidden: float = 1) -> None:
         """Add layers until there are num_layers. Then check lower layers.
@@ -406,19 +407,21 @@ def posterize(
         state = ImageApproximation(target, min_delta, layers=np.load(cache_path))
     else:
         state = ImageApproximation(target, min_delta)
+
     state.fill_layers(num_cols, 0.1)
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
+    print(f"{num_cols=}")
     state.fill_layers(num_cols)
 
     np.save(cache_path, state.layers)
 
-    if len(state.layers) < num_cols:
-        return posterize(
-            image_path,
-            max(min_delta - 1, 0),
-            num_cols,
-            ignore_cache=ignore_cache,
-        )
+    # if len(state.layers) < num_cols:
+    #     return posterize(
+    #         image_path,
+    #         max(min_delta - 1, 0),
+    #         num_cols,
+    #         ignore_cache=ignore_cache,
+    #     )
 
     return state
