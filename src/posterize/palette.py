@@ -9,6 +9,7 @@ import logging
 import numpy as np
 from pathlib import Path
 from posterize.iterative_main import Supercluster, posterize, TargetImage, draw_approximation
+import svg_ultralight as su
 
 from palette_image.svg_display import write_palette
 from palette_image.color_block_ops import sliver_color_blocks
@@ -28,6 +29,8 @@ from posterize import paths
 from typing import Any, Callable
 
 logging.basicConfig(level=logging.INFO)
+
+INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
 
 PALETTES = paths.WORKING / "palettes"
 PALETTES.mkdir(exist_ok=True)
@@ -146,14 +149,13 @@ def posterize_to_n_colors(
     print(f"{image_path.stem} {min_dist}")
 
     state = posterize(image_path, 12, 16, ignore_cache=False)
-    target = state.target
     # draw_approximation(state, 6, "input_06")
     # draw_approximation(state, 12, "input_12")
     draw_approximation(state, 16, "input_16")
     # draw_approximation(state, 24, "input_24")
 
-    colors = [int(max(x)) for x in state.layers]
-    vectors = target.clusters.members.vectors[colors]
+    colors = state.layer_colors
+    vectors = state.target.vectors[colors]
 
     for boost_delta_h in range(11):
         boost = boost_delta_h / 10
@@ -202,7 +204,8 @@ def posterize_to_n_colors(
 
         key = (image_path.stem, *tuple(palette))
         if key not in seen:
-            write_palette(image_path, color_blocks, output_name)
+                write_palette(image_path, color_blocks, output_name)
+                su.write_png_from_svg(INKSCAPE, output_name)
         seen.add(key)
 
     print(f"{len(palette)=}")
@@ -244,7 +247,7 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    # pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
