@@ -163,39 +163,31 @@ class ImageApproximation:
         weight_in_image = np.sum(image_masks * self.target.weights, axis=1)
         return 1 - weight_in_image / weight_in_layer
 
-    def _add_one_layer(self, max_hidden: float, mask: IntA | None = None) -> None:
+    def _add_one_layer(self, mask: IntA | None = None) -> None:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.append(self.layers, [new_layer], axis=0)
         print(f"added layer: {len(self.layers)}")
-        # if len(self.layers) < 2 or max_hidden >= 1:
-        #     return
-        # keep = self._get_hiddenness_per_layer() < max_hidden
-        # self.layers = self.layers[np.where(keep)]
 
-    def fill_layers(self, num_layers: int, max_hidden: float = 1) -> None:
+    def fill_layers(self, num_layers: int) -> None:
         """Add layers until there are num_layers. Then check lower layers.
 
         :param state: the ImageApproximation instance to be updated.
         :param num_layers: the number of layers to end up with. Will silently return
             fewer layers if all colors are exhausted.
-        :param max_hidden: the maximum percentage of a layer that can be covered by
-            other layers. If more than this is hidde, the layer will be removed and
-            replaced with another layer on top of the layer stack.
         :effect: update state.layers
         """
-        for i in it.count():
-            if len(self.layers) >= num_layers:
-                return
-            if i == 999:
-                max_hidden += 0.1
-                logging.log(logging.INFO, f"increasing max_hidden: {max_hidden}")
-                return self.fill_layers(num_layers, max_hidden + 0.1)
+        if len(self.layers) >= num_layers:
+            return
+        for _ in range(num_layers - len(self.layers)):
             try:
-                self._add_one_layer(max_hidden)
+                self._add_one_layer()
             except ColorsExhaustedError:
-                logging.log(logging.INFO, "colors exhausted. decreasing num_layers")
-                return self.fill_layers(num_layers - 1, max_hidden)
+                logging.log(
+                    logging.INFO,
+                    "colors exhausted. stopping at {len(self.layers)} layers",
+                )
+                return
 
     # ===============================================================================
     #   Define and select new candidate layers
@@ -408,7 +400,7 @@ def posterize(
     else:
         state = ImageApproximation(target, min_delta)
 
-    state.fill_layers(num_cols, 0.1)
+    state.fill_layers(num_cols)
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
     print(f"{num_cols=}")
