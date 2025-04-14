@@ -163,9 +163,9 @@ class ImageApproximation:
         weight_in_image = np.sum(image_masks * self.target.weights, axis=1)
         return 1 - weight_in_image / weight_in_layer
 
-    def _add_one_layer(self, max_hidden: float):
+    def _add_one_layer(self, max_hidden: float, mask: IntA | None = None) -> None:
         """Add one layer to the state."""
-        new_layer = self.get_best_candidate_layer()
+        new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.append(self.layers, [new_layer], axis=0)
         if len(self.layers) < 2 or max_hidden >= 1:
             return
@@ -200,7 +200,7 @@ class ImageApproximation:
     #   Define and select new candidate layers
     # ===============================================================================
 
-    def _new_candidate_layer( self, palette_index: int) -> IntA:
+    def _new_candidate_layer(self, palette_index: int) -> IntA:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -233,23 +233,29 @@ class ImageApproximation:
         self.layers = np.append(self.layers, [new_layer], axis=0)
         self.append_color(*palette_indices[1:])
 
-    def get_best_candidate_layer(self) -> IntA:
+    def get_best_candidate_layer(self, mask: IntA | None = None) -> IntA:
         """Get the best candidate layer to add to layers.
 
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
+        state: list[IntA]
+        if self.layers.shape[0] == 0:
+            state = []
+        else:
+            state = [_merge_layers(*self.layers)]
         available_colors = self.get_available_colors()
         if not available_colors:
             raise ColorsExhaustedError
         candidates = [self._new_candidate_layer(x) for x in available_colors]
-        scored = [(self.target.get_cost(*self.layers, x), x) for x in candidates]
+        scored = [(self.target.get_cost(*state, x, mask=mask), x) for x in candidates]
         winner = min(scored, key=itemgetter(0))[1]
         return winner
 
     def get_cache_stem(self) -> str:
         min_delta = f"{self.min_delta:05.2f}".replace(".", "_")
         return f"{self.target.path.stem}-{min_delta}"
+
 
 class TargetImage:
     """A type to store input images and evaluate approximation costs."""
@@ -282,8 +288,9 @@ class TargetImage:
         """Shorthand for self.clusters.members.weights."""
         return self.clusters.members.weights
 
-
-    def get_cost_matrix(self, *layers: IntA) -> npt.NDArray[np.floating[Any]]:
+    def get_cost_matrix(
+        self, *layers: IntA, mask: IntA | None = None
+    ) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -295,6 +302,8 @@ class TargetImage:
         """
         state = _merge_layers(*layers)
         filled = np.where(state != -1)
+        if mask is not None:
+            filled *= mask
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
         cost_matrix = np.full_like(state, np.inf, dtype=float)
         cost_matrix[filled] = (
@@ -302,7 +311,7 @@ class TargetImage:
         )
         return cost_matrix
 
-    def get_cost(self, *layers: IntA) -> float:
+    def get_cost(self, *layers: IntA, mask: IntA | None = None) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -311,10 +320,8 @@ class TargetImage:
         """
         if not layers:
             raise ValueError("At least one layer is required.")
-        cost_matrix = self.get_cost_matrix(*layers)
+        cost_matrix = self.get_cost_matrix(*layers, mask=mask)
         return float(np.sum(cost_matrix))
-
-
 
 
 def _expand_layers(
@@ -396,10 +403,10 @@ def posterize(
     cache_path = _new_cache_path(image_path, min_delta, num_cols, suffix=".npy")
 
     if cache_path.exists() and not ignore_cache:
-        state = ImageApproximation(target, min_delta, layers = np.load(cache_path))
+        state = ImageApproximation(target, min_delta, layers=np.load(cache_path))
     else:
         state = ImageApproximation(target, min_delta)
-    state.fill_layers(num_cols, .1)
+    state.fill_layers(num_cols, 0.1)
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
     state.fill_layers(num_cols)
