@@ -167,7 +167,6 @@ class ImageApproximation:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.append(self.layers, [new_layer], axis=0)
-        print(f"added layer: {len(self.layers)}")
 
     def fill_layers(self, num_layers: int) -> None:
         """Add layers until there are num_layers. Then check lower layers.
@@ -189,6 +188,18 @@ class ImageApproximation:
                 )
                 return
 
+    def two_pass_fill_layers(self, num_layers: int) -> None:
+        for i in range(2, num_layers + 1):
+            self.fill_layers(i)
+            # image = _merge_layers(*self.layers)
+            # image_masks = np.array(
+            #     [np.where(image == x, 1, 0) for x in self.layer_colors]
+            # )
+            # print(self.layer_colors)
+            # self.layers.resize((0, 512))
+            # for mask in image_masks:
+            #     self._add_one_layer(mask=mask)
+            # print(self.layer_colors)
     # ===============================================================================
     #   Define and select new candidate layers
     # ===============================================================================
@@ -238,6 +249,7 @@ class ImageApproximation:
         else:
             state = [_merge_layers(*self.layers)]
         available_colors = self.get_available_colors()
+        # print(f"{len(available_colors)=}")
         if not available_colors:
             raise ColorsExhaustedError
         candidates = [self._new_candidate_layer(x) for x in available_colors]
@@ -295,8 +307,6 @@ class TargetImage:
         """
         state = _merge_layers(*layers)
         filled = np.where(state != -1)
-        if mask is not None:
-            filled *= mask
         image = np.array(range(self.pmatrix.shape[0]), dtype=int)
         cost_matrix = np.full_like(state, np.inf, dtype=float)
         cost_matrix[filled] = (
@@ -314,6 +324,8 @@ class TargetImage:
         if not layers:
             raise ValueError("At least one layer is required.")
         cost_matrix = self.get_cost_matrix(*layers, mask=mask)
+        if mask is not None:
+            cost_matrix *= mask
         return float(np.sum(cost_matrix))
 
 
@@ -390,6 +402,8 @@ def posterize(
     :param num_cols: the number of colors in the posterization image
     :return: posterized image
     """
+    num_cols = 16
+    min_delta = 0
     ignore_cache = True
 
     target = TargetImage(image_path)
@@ -400,7 +414,7 @@ def posterize(
     else:
         state = ImageApproximation(target, min_delta)
 
-    state.fill_layers(num_cols)
+    state.two_pass_fill_layers(num_cols)
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
     print(f"{num_cols=}")
