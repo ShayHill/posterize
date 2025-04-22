@@ -65,20 +65,29 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-def _merge_layers(
-    *layers: IntA,
-) -> IntA:
+def _new_empty_layers() -> IntA:
+    """Create an empty layers array.
+
+    :return: (0, 512) array of layers. Each layer is a palette index or -1 for
+        transparent.
+    """
+    return np.empty((0, 512), dtype=int)
+
+
+def _merge_layers(*layers: IntA) -> IntA:
     """Merge layers into a single layer.
 
-    :param layers: (n, c) array of n layers, each containing a value (color index)
-        for each color index. These will all be the same color or -1 for colors that
-        are transparent in each layer.
-    :return: one (c,) array with the last non-transparent color in each position
+    :param layers: n shape (512,) layer arrays, each containing at most two values:
+        * a color index that will replace one or more indices in the quantized image
+        * -1 for transparent. The first layer will be a solid color and contain no -1
+    :return: one (512,) array with the last non-transparent color in each position
 
-    Where an image is a (rows, cols) array of indices--usually in (0, 511)--each
-    layer of an approximation will color some of those indices with one palette index
-    per layer, and others with -1 for transparency.
+    Where an image is a (rows, cols) array of indices---each layer of an
+    approximation will color some of those indices with one palette index per layer,
+    and others with -1 for transparency.
     """
+    if len(layers) == 0:
+        return np.full((512,), -1, dtype=int)
     merged = layers[0].copy()
     for layer in layers[1:]:
         merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
@@ -114,7 +123,7 @@ class ImageApproximation:
         else:
             self.colors = tuple(colors)
         if layers is None:
-            self.layers = np.empty((0, 512), dtype=int)
+            self.layers = _new_empty_layers()
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
@@ -200,6 +209,7 @@ class ImageApproximation:
             # for mask in image_masks:
             #     self._add_one_layer(mask=mask)
             # print(self.layer_colors)
+
     # ===============================================================================
     #   Define and select new candidate layers
     # ===============================================================================
