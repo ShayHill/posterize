@@ -48,6 +48,17 @@ FltA: TypeAlias = npt.NDArray[np.floating[Any]]
 Flts: TypeAlias = npt.ArrayLike
 
 
+def _get_rankings(vals: Iterable[float], *, reverse: bool=False) -> list[int]:
+    """Get the rankings of the values in vals.
+
+    :param vals: an iterable of values
+    :return: a list of rankings for each value in vals
+    """
+    with_ixs = list(enumerate(vals))
+    sorted_ixs = sorted(with_ixs, key=itemgetter(1), reverse=reverse)
+    return [x[0] for x in sorted_ixs]
+
+
 class ColorsExhaustedError(Exception):
     """Exception raised when a new layer is requested, but no colors are available."""
 
@@ -92,6 +103,19 @@ def _merge_layers(*layers: IntA) -> IntA:
     for layer in layers[1:]:
         merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
     return merged
+
+def _apply_mask(layer: IntA, map: IntA | None) -> IntA:
+    """Apply a map to a layer if the map is not None.
+
+    :param layer: the layer to apply the map to (shape (512,) consisting of one
+        palette index and -1 where transparent)
+    :param map: the map to apply to the layer (shape (512,)) consisting of 1s and 0s
+    :return: the layer with the map applied (shape (512,)) with, most likely,
+        additional transparent (-1) values
+    """
+    if map is None:
+        return layer
+    return np.where(map == 1, layer, -1)
 
 
 @dataclasses.dataclass
@@ -198,17 +222,37 @@ class ImageApproximation:
                 return
 
     def two_pass_fill_layers(self, num_layers: int) -> None:
+        debug_image_stem = (f"debug_{x:03d}" for x in it.count())
+
         for i in range(2, num_layers + 1):
             self.fill_layers(i)
-            # image = _merge_layers(*self.layers)
-            # image_masks = np.array(
-            #     [np.where(image == x, 1, 0) for x in self.layer_colors]
+            image = _merge_layers(*self.layers)
+            image_masks = np.array(
+                [np.where(image == x, 1, 0) for x in self.layer_colors]
+            )
+            # try:
+            # big_layers = _expand_layers(self.target.image, self.layers)
+            # draw_posterized_image(
+            #     self.target.vectors,
+            #     big_layers,
+            #     next(debug_image_stem),
             # )
+            # except:
+                # breakpoint()
+
             # print(self.layer_colors)
-            # self.layers.resize((0, 512))
-            # for mask in image_masks:
-            #     self._add_one_layer(mask=mask)
-            # print(self.layer_colors)
+            self.layers.resize((0, 512))
+            for mask in image_masks:
+                try:
+                    self._add_one_layer(mask=mask)
+                except ZeroDivisionError:
+                    self._add_one_layer()
+            # big_layers = _expand_layers(self.target.image, self.layers)
+            # draw_posterized_image(
+            #     self.target.vectors,
+            #     big_layers,
+            #     next(debug_image_stem),
+            # )
 
     # ===============================================================================
     #   Define and select new candidate layers
@@ -253,18 +297,79 @@ class ImageApproximation:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        state: list[IntA]
-        if self.layers.shape[0] == 0:
-            state = []
-        else:
-            state = [_merge_layers(*self.layers)]
+        state = _merge_layers(*self.layers)
+        state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
-        # print(f"{len(available_colors)=}")
+
         if not available_colors:
             raise ColorsExhaustedError
+
         candidates = [self._new_candidate_layer(x) for x in available_colors]
-        scored = [(self.target.get_cost(*state, x, mask=mask), x) for x in candidates]
-        winner = min(scored, key=itemgetter(0))[1]
+        masked_candidates = [_apply_mask(x, mask) for x in candidates]
+        scores = [self.target.get_cost(state, x, mask=mask) for x in candidates]
+
+        if state_cost == np.inf:
+            state_cost = max(scores)
+
+        savings = [state_cost - x for x in scores]
+
+        # if mas:
+        # best_idx = np.argmax(savings)
+        # return candidates[best_idx]
+        # breakpoint()
+
+        pixels: list[np.floating[Any]] = []
+        for candidate in candidates:
+            masked = _apply_mask(candidate, mask)
+            weights = self.target.weights[np.where(masked != -1)]
+            pixels.append(np.sum(weights))
+
+        avgs = [s / p if p > 0 else 0 for s, p in zip(savings, pixels, strict=True)]
+
+        savings = [x / max(savings) for x in savings]
+        avgs = [x / max(avgs) for x in avgs]
+
+        savings_weight = 0.25
+        more_is_better = [s * savings_weight + p * (1 - savings_weight) for s, p in zip(savings, avgs)]
+
+        best_idx = np.argmax(np.array(more_is_better))
+        return candidates[best_idx]
+
+        counts = (
+            np.array([np.count_nonzero(x != -1) for x in masked_candidates])   * self.target.weights[available_colors]
+        )
+
+        # counts2 = (
+        #     np.array([np.count_nonzero(x != -1) for x in candidates])
+        #     * self.target.weights[available_colors]
+        # )
+        # if mask is not None:
+        #     breakpoint()
+        # counts = [s / c for s, c in zip(savings, counts)]
+        counts = [s / c for s, c in zip(savings, counts)]
+
+        scored = [(s**2 * (1 + 1 / c), can) for s, c, can in zip(savings, counts, candidates)]
+
+        # by_savings = _get_rankings(savings)
+        by_savings = [x/max(savings) for x in savings]
+        by_pixels = [x/max(counts) for x in counts]
+
+
+        # aaa = max(counts)
+        # breakpoint()
+
+        # by_pixels = _get_rankings(counts)
+
+        savings_weight = 1
+        scored = [(s * savings_weight + c * (1 - savings_weight), can) for s, c, can in zip(by_savings, by_pixels, candidates)]
+
+
+        if len(self.layers) > 3:
+            aaa = [state_cost - x for x in scores]
+            bbb = state_cost - np.array(scores)
+            # breakpoint()
+
+        winner = max(scored, key=itemgetter(0))[1]
         return winner
 
     def get_cache_stem(self) -> str:
@@ -304,7 +409,7 @@ class TargetImage:
         return self.clusters.members.weights
 
     def get_cost_matrix(
-        self, *layers: IntA, mask: IntA | None = None
+        self, *layers: IntA
     ) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
@@ -333,9 +438,9 @@ class TargetImage:
         """
         if not layers:
             raise ValueError("At least one layer is required.")
-        cost_matrix = self.get_cost_matrix(*layers, mask=mask)
+        cost_matrix = self.get_cost_matrix(*layers)
         if mask is not None:
-            cost_matrix *= mask
+            cost_matrix[np.where(mask == 0)] = 0
         return float(np.sum(cost_matrix))
 
 
@@ -412,7 +517,7 @@ def posterize(
     :param num_cols: the number of colors in the posterization image
     :return: posterized image
     """
-    num_cols = 16
+    num_cols = 12
     min_delta = 0
     ignore_cache = True
 
@@ -425,6 +530,12 @@ def posterize(
         state = ImageApproximation(target, min_delta)
 
     state.two_pass_fill_layers(num_cols)
+    # big_layers = _expand_layers(self.target.image, self.layers)
+    # draw_posterized_image(
+    #     self.target.vectors,
+    #     big_layers,
+    #     next(debug_image_stem),
+    # )
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
     print(f"{num_cols=}")
