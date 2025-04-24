@@ -1,46 +1,51 @@
-"""Replace colors with colormap indices.
+"""Reduce an image to 512 indexed colors.
 
-A colormap has four associated properties:
+This is much slower than the quantize methods in PIL, but it is much less inclined to
+eat bright colors. It might take a few minutes for just one image, but the results
+are cached and you end up with not only a quantized image, but a proximity matrix
+between the colors in the palette.
 
-* `supercluster.members.vectors` is a (n, 3) array of RGB vectors.
-* `supercluster.members.weights` is a (n,) array of weights.
-* `supercluster.members.pmatrix` is a (n, n) array of pairwise distances.
-* `supercluster.ixs` is a (m,) array of indices to `.vectors`. After the operations
-  here, this array may only contain indices to a subset of the original `.vectors`.
-
-So, to capture all required information related to a colormap, these functions return
-a `SuperclusterBase` instance with an `.ixs` attribute containing the subset of
-indices used and `.members` attribute containing a `Members` instance with vectors,
-weights, and pmatrix.
-
-To complete the entire process:
-
-* Create an initial SuperclusterBase instance from an input image.
-* Map the image pixel colors to `supercluster.members.vectors`.
-* Update `supercluster.ixs` to contain indices to only the vectors used in the image
-  approximation.
-* Update `supercluster.members.weights` to contain the number of times each vector is
-  used in the image approximation.
-
-The "updates" are done by creating new SuperclusterBase and Members instances.
+There is a limit to how big an array you can create, so large images are resized to
+_MAX_DIM if they are larger than _MAX_DIM in either dimension.
 
 :author: Shay Hill
-:created: 2024-10-13
+:created: 2025-04-24
 """
 
 from pathlib import Path
 from typing import Annotated, TypeAlias, TypeVar
-
+import functools as ft
+import dataclasses
 import numpy as np
-from basic_colormath import get_sqeuclidean_matrix
-from cluster_colors import Members, SuperclusterBase, get_image_supercluster
-from cluster_colors.cluster_supercluster import SuperclusterBase
+from basic_colormath import (
+    get_sqeuclidean,
+    get_sqeuclidean_matrix,
+    get_delta_e_matrix,
+    floats_to_uint8,
+)
+from contextlib import suppress
+from cluster_colors import (
+    Members,
+    SuperclusterBase,
+    get_image_supercluster,
+    stack_pool_cut_colors,
+)
+from cluster_colors.cluster_supercluster import SuperclusterBase, Members
 from numpy import typing as npt
 from PIL import Image
+from typing import Any
+import time
 
 from posterize.paths import CACHE_DIR
 
+_CACHE_PREFIX = "quantized_"
+
+_MAX_DIM = 1000
+
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int64], "(r,c)"]
+_RgbMatrix: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r,c,3)"]
+_Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
+_Indices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(m,)"]
 _TSuperclusterBase = TypeVar("_TSuperclusterBase", bound=SuperclusterBase)
 
 
@@ -133,3 +138,132 @@ def new_supercluster_with_quantized_image(
         supercluster, path, ignore_cache=ignore_cache
     )
     return resample_image(supercluster, pixel_indices), pixel_indices
+
+
+def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _IndexMatrix:
+    """Map an image to a colormap.
+
+    :param colormap: colormap to map to (m, n)
+    :param colors: colors (p, n)
+    :return: a (p, 1) array of indices to the colormap
+
+    For each pixel in an image array (n, 3), find the index of the closest vector
+    in `colormap`.
+    """
+    unique_colors, reverse_index = np.unique(colors, axis=0, return_inverse=True)
+    pmatrix = get_delta_e_matrix(unique_colors, colormap)
+    return np.argmin(pmatrix[reverse_index], axis=1)
+
+
+@dataclasses.dataclass(frozen=True)
+class QuantizedImage:
+    """Cached array values for a quantized image.
+
+    palette: (512, 3) array of color vectors
+    indices: (r, c) array of indices to the palette colors. This defines the source
+        image in 512 colors.
+    pmatrix: (512, 512) array of delta E values between the palette colors.
+    weights: (512,) array of the number of times each palette color is used in the
+        quantized image.
+    """
+
+    palette: Annotated[npt.NDArray[np.uint8], "(512,3)"]
+    indices: Annotated[npt.NDArray[np.intp], "(r,c)"]
+    pmatrix: Annotated[npt.NDArray[np.float64], "(512,512)"]
+
+    @ft.cached_property
+    def weights(self) -> Annotated[npt.NDArray[np.intp], "(512,)"]:
+        return np.bincount(self.indices.flatten(), minlength=len(self.palette))
+
+
+def _get_cache_paths(source: Path) -> dict[str, Path]:
+    """Get the cache paths for the quantized image.
+
+    :param source: path to an image
+    :return: a dictionary with the cache paths for the quantized image
+        * The keys are "palette", "indices", and "pmatrix"
+        * The values are the path + stems to the cache files
+    """
+    attribs = ("palette", "indices", "pmatrix")
+    return {a: CACHE_DIR.with_name(f"{_CACHE_PREFIX}_{a}.npy") for a in attribs}
+
+
+@staticmethod
+def clear_quantized_image_cache(source: Path) -> None:
+    """Clear the cache for one quantized image.
+
+    :param source: path to the source image previously quantizes
+    """
+    cache_paths = _get_cache_paths(source)
+    for path in cache_paths.values():
+        if path.exists():
+            path.unlink()
+
+
+def clear_all_quantized_image_caches() -> None:
+    """Clear all caches for quantized images."""
+    for path in CACHE_DIR.glob(f"{_CACHE_PREFIX}*.npy"):
+        path.unlink()
+
+
+def _load_quantized_image(source: Path) -> QuantizedImage:
+    """Load a quantized image from the cache.
+
+    :param source: path to the source image previously quantizes
+    :return: a QuantizedImage object
+    """
+    cache_paths = _get_cache_paths(source)
+    if not all(path.exists() for path in cache_paths.values()):
+        raise FileNotFoundError("Cache files not found.")
+    palette = np.load(cache_paths["palette"])
+    indices = np.load(cache_paths["indices"])
+    pmatrix = np.load(cache_paths["pmatrix"])
+    return QuantizedImage(palette, indices, pmatrix)
+
+
+def _dump_quantized_image(quantized_image: QuantizedImage, source: Path) -> None:
+    """Dump a quantized image to the cache.
+
+    :param quantized_image: a QuantizedImage object
+    :param source: path to the source image previously quantizes
+    """
+    cache_paths = _get_cache_paths(source)
+    for name, path in cache_paths.items():
+        with path.open("wb") as f:
+            np.save(f, getattr(quantized_image, name))
+
+
+def quantize_image(source: Path, ignore_cache: bool = False) -> QuantizedImage:
+    """Reduce an image to 512 indexed colors.
+
+    :param source: path to an image
+    :param ignore_cache: if True, ignore any cached results
+    :return: a QuantizedImage object (palette, indices, pmatrix, weights)
+    """
+    if ignore_cache:
+        clear_quantized_image_cache(source)
+    with suppress(FileNotFoundError):
+        return _load_quantized_image(source)
+
+    image = Image.open(source)
+    if max(image.size) > _MAX_DIM:
+        image.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
+    image = image.convert("RGBA")
+
+    rgba_colors = np.array(image).reshape(-1, 4)
+    rgb_colors = rgba_colors[:, :3]
+    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
+    indices = _index_to_nearest_color(palette, rgb_colors).reshape(*image.size)
+    pmatrix = get_delta_e_matrix(palette)
+
+    quantized_image = QuantizedImage(palette, indices, pmatrix)
+    _dump_quantized_image(quantized_image, source)
+    return quantized_image
+
+
+test_image = Path(__file__).parents[2] / "tests" / "resources" / "songs2.jpg"
+
+
+if __name__ == "__main__":
+    # Example usage
+    quantize_image(test_image)
