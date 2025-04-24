@@ -40,6 +40,10 @@ from posterize.paths import CACHE_DIR
 
 _CACHE_PREFIX = "quantized_"
 
+# Resize images larger than this to this maximum dimension. This value is necessary,
+# because you can only create arrays of a certain size. A smaller value might speed
+# up testing, but the quantization cache will need to be cleared if this value
+# changes.
 _MAX_DIM = 1000
 
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.int64], "(r,c)"]
@@ -100,6 +104,32 @@ def _map_pixels_to_members_vectors(
     image_rgb_vector = np.array(image).astype(float).reshape(-1, 3)
     image_idx_vector = np.argmin(
         get_sqeuclidean_matrix(image_rgb_vector, colormap), axis=1
+    )
+    image_idx_matrix = image_idx_vector.reshape(image.size[1], image.size[0])
+
+    np.save(cache_path, image_idx_matrix)
+    return image_idx_matrix
+
+def _map_pixels_to_members_vectors2(
+    colormap: npt.NDArray[np.uint8], image: Path, *, ignore_cache: bool = False
+) -> _IndexMatrix:
+    """Map an image to a colormap.
+
+    :param supercluster: supercluster containing members with a colormap
+    :param path: path to an image
+    :param ignore_cache: if True, ignore any cached results
+    :return: an (r, c) array with a colormap array index for each pixel
+
+    For each pixel in an image array (r, c, 3), find the index of the closest vector
+    in `supercluster.members.vectors`.
+    """
+    cache_path = CACHE_DIR / f"pathstem_colormapped.npy"
+
+    # image = Image.open(path)
+    image = image.convert("RGB")
+    image_rgb_vector = np.array(image).astype(float).reshape(-1, 3)
+    image_idx_vector = np.argmin(
+        get_delta_e_matrix(image_rgb_vector, colormap), axis=1
     )
     image_idx_matrix = image_idx_vector.reshape(image.size[1], image.size[0])
 
@@ -184,8 +214,9 @@ def _get_cache_paths(source: Path) -> dict[str, Path]:
         * The keys are "palette", "indices", and "pmatrix"
         * The values are the path + stems to the cache files
     """
+    prefix = f"{_CACHE_PREFIX}_{source.stem}"
     attribs = ("palette", "indices", "pmatrix")
-    return {a: CACHE_DIR.with_name(f"{_CACHE_PREFIX}_{a}.npy") for a in attribs}
+    return {a: CACHE_DIR.with_name(f"{prefix}_{a}.npy") for a in attribs}
 
 
 @staticmethod
@@ -253,7 +284,7 @@ def quantize_image(source: Path, ignore_cache: bool = False) -> QuantizedImage:
     rgba_colors = np.array(image).reshape(-1, 4)
     rgb_colors = rgba_colors[:, :3]
     palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-    indices = _index_to_nearest_color(palette, rgb_colors).reshape(*image.size)
+    indices = _index_to_nearest_color(palette, rgb_colors).reshape(image.height, image.width)
     pmatrix = get_delta_e_matrix(palette)
 
     quantized_image = QuantizedImage(palette, indices, pmatrix)
@@ -266,4 +297,5 @@ test_image = Path(__file__).parents[2] / "tests" / "resources" / "songs2.jpg"
 
 if __name__ == "__main__":
     # Example usage
+    # clear_all_quantized_image_caches()
     quantize_image(test_image)

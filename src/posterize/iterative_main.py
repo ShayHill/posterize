@@ -36,7 +36,7 @@ from numpy import typing as npt
 
 from posterize import paths
 from posterize.image_processing import draw_posterized_image
-from posterize.quantization import new_supercluster_with_quantized_image
+from posterize.quantization import new_supercluster_with_quantized_image, quantize_image, QuantizedImage
 
 logging.basicConfig(level=logging.INFO)
 
@@ -143,7 +143,8 @@ class ImageApproximation:
         self.target = target_image
         self.min_delta = min_delta
         if colors is None:
-            self.colors = tuple(map(int, target_image.clusters.ixs))
+            self.colors = tuple(range(512))
+            # self.colors = tuple(map(int, target_image.clusters.ixs))
         else:
             self.colors = tuple(colors)
         if layers is None:
@@ -389,24 +390,15 @@ class TargetImage:
         :param path: path to the image
         """
         self.path = path
-        self.clusters, self.image = new_supercluster_with_quantized_image(
-            Supercluster, path
-        )
+        # self.clusters, self.image = new_supercluster_with_quantized_image(
+        #     Supercluster, path
+        # )
 
-    @property
-    def vectors(self) -> npt.NDArray[np.floating[Any]]:
-        """Shorthand for self.clusters.members.vectors."""
-        return self.clusters.members.vectors
-
-    @property
-    def pmatrix(self) -> npt.NDArray[np.floating[Any]]:
-        """Shorthand for self.clusters.members.pmatrix."""
-        return self.clusters.members.pmatrix
-
-    @property
-    def weights(self) -> npt.NDArray[np.floating[Any]]:
-        """Shorthand for self.clusters.members.weights."""
-        return self.clusters.members.weights
+        quantized_image = quantize_image(path)
+        self.vectors = quantized_image.palette
+        self.image = quantized_image.indices
+        self.pmatrix = quantized_image.pmatrix
+        self.weights = quantized_image.weights
 
     def get_cost_matrix(
         self, *layers: IntA
@@ -530,12 +522,6 @@ def posterize(
         state = ImageApproximation(target, min_delta)
 
     state.two_pass_fill_layers(num_cols)
-    # big_layers = _expand_layers(self.target.image, self.layers)
-    # draw_posterized_image(
-    #     self.target.vectors,
-    #     big_layers,
-    #     next(debug_image_stem),
-    # )
 
     state = ImageApproximation(target, min_delta, state.layer_colors)
     print(f"{num_cols=}")
@@ -543,12 +529,5 @@ def posterize(
 
     np.save(cache_path, state.layers)
 
-    # if len(state.layers) < num_cols:
-    #     return posterize(
-    #         image_path,
-    #         max(min_delta - 1, 0),
-    #         num_cols,
-    #         ignore_cache=ignore_cache,
-    #     )
 
     return state
