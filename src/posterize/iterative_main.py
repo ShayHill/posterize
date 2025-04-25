@@ -269,7 +269,6 @@ def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
 
 def posterize(
     image_path: Path,
-    min_delta: float,
     num_cols: int,
     *,
     ignore_cache: bool = True,

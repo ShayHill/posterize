@@ -41,6 +41,7 @@ _Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512)"]
 _Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
 _Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
 
+
 @dataclasses.dataclass(frozen=True)
 class TargetImage:
     """Cached array values for a quantized image and methods to calculate costs.
@@ -94,6 +95,7 @@ class TargetImage:
             cost_matrix[np.where(mask == 0)] = 0
         return float(np.sum(cost_matrix))
 
+
 def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     """Map a full set of image colors to a colormap.
 
@@ -107,8 +109,6 @@ def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     unique_colors, reverse_index = np.unique(colors, axis=0, return_inverse=True)
     pmatrix = get_delta_e_matrix(unique_colors, colormap)
     return np.argmin(pmatrix[reverse_index], axis=1)
-
-
 
 
 def _get_cache_paths(source: Path) -> dict[str, Path]:

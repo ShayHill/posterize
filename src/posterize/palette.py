@@ -47,16 +47,17 @@ def posterize_to_n_colors(
 
     print(f"{image_path.stem} {min_dist}")
 
-    state = posterize(image_path, 12, 6, ignore_cache=False)
+    state = posterize(image_path, 6, ignore_cache=False)
     # draw_approximation(state, 6, "input_06")
     # draw_approximation(state, 12, "input_12")
     draw_approximation(image_path, state, 6, "input_16")
     # draw_approximation(state, 24, "input_24")
 
-    return
 
     colors = state.layer_colors
-    vectors = state.target.vectors[colors]
+    vectors = state.target.palette[colors]
+
+    return
 
     for boost_delta_h in range(11):
         boost = boost_delta_h / 10
