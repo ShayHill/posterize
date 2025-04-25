@@ -5,112 +5,25 @@
 """
 
 import functools as ft
-import logging
-import numpy as np
 from pathlib import Path
-from posterize.iterative_main import Supercluster, posterize, TargetImage, draw_approximation
-import svg_ultralight as su
-
-from palette_image.svg_display import write_palette
-from palette_image.color_block_ops import sliver_color_blocks
 
 import numpy as np
-from basic_colormath import (
-    rgb_to_hsv,
-    get_deltas_e,
-    rgbs_to_hsv,
-)
-from cluster_colors import SuperclusterBase, Members
+import svg_ultralight as su
+from basic_colormath import rgb_to_hsv, rgbs_to_hsv
+from cluster_colors import Members, SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
+from palette_image.color_block_ops import sliver_color_blocks
+from palette_image.svg_display import write_palette
 
 from posterize import paths
+from posterize.iterative_main import Supercluster, draw_approximation, posterize
 
-from typing import Any, Callable
-
-logging.basicConfig(level=logging.INFO)
 
 INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
 
 PALETTES = paths.WORKING / "palettes"
 PALETTES.mkdir(exist_ok=True)
-
-def build_proximity_matrix(
-    colors: npt.ArrayLike,
-    func: Callable[[npt.ArrayLike, npt.ArrayLike], npt.NDArray[np.floating[Any]]],
-) -> npt.NDArray[np.floating[Any]]:
-    """Build a proximity matrix from a list of colors.
-
-    :param colors: an array (n, d) of Lab or rgb colors
-    :param func: a commutative, vectorized function that calculates the proximity
-        between two colors. It is assumed that identical colors have a
-        proximity of 0.
-    :return: an array (n, n) of proximity values between every pair of colors
-
-    The proximity matrix is symmetric.
-    """
-    colors = np.asarray(colors)
-    n = len(colors)
-    rows = np.repeat(colors[:, np.newaxis, :], n, axis=1)
-    cols = np.repeat(colors[np.newaxis, :, :], n, axis=0)
-    proximity_matrix = np.zeros((n, n))
-    ut = np.triu_indices(n, k=1)
-    lt = (ut[1], ut[0])
-    proximity_matrix[ut] = func(cols[ut], rows[ut])
-    proximity_matrix[lt] = proximity_matrix[ut]
-    return proximity_matrix
-
-
-def get_circular_deltas(
-    color_a: npt.ArrayLike, color_b: npt.ArrayLike
-) -> npt.NDArray[np.floating[Any]]:
-    """Get the circular pairwise deltas between two arrays of hues in [0, 360).
-
-    :param color_a: A 1D array of hue values in [0, 360)
-    :param color_b: A 1D array of hue values in [0, 360%)
-    :return: A lD array of circular pairwise distances between a and b
-    """
-    deltas_h = np.abs(np.subtract(color_a, color_b))
-    return np.minimum(deltas_h, 360 - deltas_h)
-
-
-def new_vibrance_weighted_delta_e(
-    boost_vibrant: float,
-
-    color_a: npt.ArrayLike, color_b: npt.ArrayLike
-) -> npt.NDArray[np.floating[Any]]:
-    """Get the delta E between two colors weighted by their vibrance.
-    
-    :param boost_vibrant: A float [0, 1] that boosts the vibrance of the colors
-    :param color_a: (r, g, b) color, TargetImage
-    :param color_b: (r, g, b) color
-    :return: delta E between color_a and color_b weighted by their vibrance
-
-    The vibrance of a color is the distance between the color and a pure version of
-    the color. The delta E is then multiplied by the vibrance of both colors.
-    """
-    color_a = np.asarray(color_a)
-    color_b = np.asarray(color_b)
-    deltas_e = get_deltas_e(color_a, color_b)
-    if boost_vibrant == 0:
-        return deltas_e
-
-    vibs_a = np.max(color_a, axis=1) - np.min(color_a, axis=1)
-    vibs_b = np.max(color_b, axis=1) - np.min(color_b, axis=1)
-    hsvs_a = rgbs_to_hsv(color_a)
-    hsvs_b = rgbs_to_hsv(color_b)
-    deltas_h = get_circular_deltas(hsvs_a[:, 0], hsvs_b[:, 0])
-
-    delta_e_scalar = 255 * 180 * (1 - boost_vibrant)
-    delta_h_scalar = np.min([vibs_a, vibs_b], axis=0) * deltas_h * boost_vibrant
-
-    return deltas_e * delta_e_scalar + deltas_h * delta_h_scalar
-    # return deltas_e * (
-    #     (255 * 0) + np.min([vibs_a, vibs_b], axis=0) * deltas_h
-    # )
-    # return deltas_e * (
-    #     (255 * 180) + np.min([vibs_a, vibs_b], axis=0) * deltas_h
-    # )
 
 
 class SumSupercluster(SuperclusterBase):
@@ -120,20 +33,6 @@ class SumSupercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
-
-
-def _get_dominant(
-    supercluster: SuperclusterBase, min_members: int = 0, full_weight=None
-) -> Supercluster:
-    """Try to extract a cluster with a dominant color."""
-    if full_weight is None:
-        full_weight = sum(x.weight for x in supercluster.clusters)
-    supercluster.set_n(2)
-    heaviest = max(supercluster.clusters, key=lambda x: x.weight)
-    if heaviest.weight / full_weight > 1 / 2 and len(heaviest.ixs) >= min_members:
-        supercluster = supercluster.copy(inc_members=heaviest.ixs)
-        return _get_dominant(supercluster, min_members, full_weight)
-    return supercluster
 
 
 def posterize_to_n_colors(
@@ -176,7 +75,6 @@ def posterize_to_n_colors(
         palette = [x.centroid for x in heaviest.clusters]
         breakpoint()
 
-
         def get_contrast(palette_: list[int], color: int) -> float:
             # return min(pmatrix[color, palette_]) * (max(vectors[color]) - min(vectors[color]))
             if color in palette_:
@@ -208,8 +106,8 @@ def posterize_to_n_colors(
 
         key = (image_path.stem, *tuple(palette))
         if key not in seen:
-                write_palette(image_path, color_blocks, output_name)
-                su.write_png_from_svg(INKSCAPE, output_name)
+            write_palette(image_path, color_blocks, output_name)
+            su.write_png_from_svg(INKSCAPE, output_name)
         seen.add(key)
 
     print(f"{len(palette)=}")
@@ -273,7 +171,6 @@ if __name__ == "__main__":
             )
         except Exception as e:
             raise e
-            pass
 
     print("done")
 
