@@ -108,17 +108,17 @@ class ImageApproximation:
 
     target_image: TargetImage
     colors: tuple[int, ...]
-    min_delta: float
+    # min_delta: float
 
     def __init__(
         self,
         target_image: TargetImage,
-        min_delta: float,
+        # min_delta: float,
         colors: Iterable[int] | None = None,
         layers: _IntA | None = None,
     ) -> None:
         self.target = target_image
-        self.min_delta = min_delta
+        # self.min_delta = min_delta
         if colors is None:
             self.colors = tuple(range(512))
         else:
@@ -150,8 +150,8 @@ class ImageApproximation:
             return list(self.colors)
         layer_colors = self.layer_colors
         assert -1 not in layer_colors
-        layer_prox = self.target.pmatrix[:, layer_colors]
-        return [x for x in self.colors if min(layer_prox[x]) > self.min_delta]
+        # layer_prox = self.target.pmatrix[:, layer_colors]
+        return [x for x in self.colors if x not in layer_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
         """Add one layer to the state."""
@@ -250,8 +250,7 @@ class ImageApproximation:
         return candidates[best_idx]
 
     def get_cache_stem(self) -> str:
-        min_delta = f"{self.min_delta:05.2f}".replace(".", "_")
-        return f"{self.target.path.stem}-{min_delta}"
+        return f"{self.target.path.stem}"
 
 
 class TargetImage:
@@ -371,6 +370,6 @@ def posterize(
     :return: posterized image
     """
     target = TargetImage(image_path)
-    state = ImageApproximation(target, min_delta)
+    state = ImageApproximation(target)
     state.two_pass_fill_layers(num_cols)
     return state

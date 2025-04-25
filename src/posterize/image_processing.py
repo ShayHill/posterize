@@ -1,4 +1,4 @@
-"""Write images to disk, convert arrays to images, call potrace.
+"""irite images to disk, convert arrays to images, call potrace.
 
 :author: Shay Hill
 :created: 2024-10-13
