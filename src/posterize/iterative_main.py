@@ -22,41 +22,17 @@ would completely cover the pink layer anyway.
 from __future__ import annotations
 
 import dataclasses
-import functools
-import logging
-from operator import itemgetter
-import itertools as it
 from pathlib import Path
-from typing import Annotated, Any, Container, Iterable, Iterator, TypeAlias
+from typing import Annotated, Any, Iterable, Iterator, TypeAlias
 
 import numpy as np
 from cluster_colors import SuperclusterBase
-from lxml.etree import _Element as EtreeElement  # type: ignore
 from numpy import typing as npt
 
-from posterize import paths
 from posterize.image_processing import draw_posterized_image
-from posterize.quantization import new_supercluster_with_quantized_image, quantize_image, QuantizedImage
+from posterize.quantization import quantize_image
 
-logging.basicConfig(level=logging.INFO)
-
-
-IntA: TypeAlias = npt.NDArray[np.integer[Any]]
-Ints: TypeAlias = npt.ArrayLike
-
-FltA: TypeAlias = npt.NDArray[np.floating[Any]]
-Flts: TypeAlias = npt.ArrayLike
-
-
-def _get_rankings(vals: Iterable[float], *, reverse: bool=False) -> list[int]:
-    """Get the rankings of the values in vals.
-
-    :param vals: an iterable of values
-    :return: a list of rankings for each value in vals
-    """
-    with_ixs = list(enumerate(vals))
-    sorted_ixs = sorted(with_ixs, key=itemgetter(1), reverse=reverse)
-    return [x[0] for x in sorted_ixs]
+_IntA: TypeAlias = npt.NDArray[np.intp]
 
 
 class ColorsExhaustedError(Exception):
@@ -76,7 +52,7 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-def _new_empty_layers() -> IntA:
+def _new_empty_layers() -> _IntA:
     """Create an empty layers array.
 
     :return: (0, 512) array of layers. Each layer is a palette index or -1 for
@@ -85,7 +61,7 @@ def _new_empty_layers() -> IntA:
     return np.empty((0, 512), dtype=int)
 
 
-def _merge_layers(*layers: IntA) -> IntA:
+def _merge_layers(*layers: _IntA) -> _IntA:
     """Merge layers into a single layer.
 
     :param layers: n shape (512,) layer arrays, each containing at most two values:
@@ -104,7 +80,8 @@ def _merge_layers(*layers: IntA) -> IntA:
         merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
     return merged
 
-def _apply_mask(layer: IntA, map: IntA | None) -> IntA:
+
+def _apply_mask(layer: _IntA, map: _IntA | None) -> _IntA:
     """Apply a map to a layer if the map is not None.
 
     :param layer: the layer to apply the map to (shape (512,) consisting of one
@@ -138,13 +115,12 @@ class ImageApproximation:
         target_image: TargetImage,
         min_delta: float,
         colors: Iterable[int] | None = None,
-        layers: IntA | None = None,
+        layers: _IntA | None = None,
     ) -> None:
         self.target = target_image
         self.min_delta = min_delta
         if colors is None:
             self.colors = tuple(range(512))
-            # self.colors = tuple(map(int, target_image.clusters.ixs))
         else:
             self.colors = tuple(colors)
         if layers is None:
@@ -162,17 +138,6 @@ class ImageApproximation:
         """Get the color of a layer."""
         return int(np.max(self.layers[index]))
 
-    def get_state_weight(self, idx: int) -> float:
-        """Get the combined weight of all colors approximated by a color index.
-
-        Each quantixed image (self.image) will have 512 color indices. An
-        approximation is built from a subset of these indices. For each index in that
-        subset, this method will return the sum of the weights of all pixels in the
-        quantized image that are approximated by that indjx.
-        """
-        state_image = _merge_layers(*self.layers)
-        return float(np.sum(self.target.weights[state_image == idx]))
-
     def get_available_colors(self) -> list[int]:
         """Get available colors in the i.wmage.
 
@@ -188,16 +153,7 @@ class ImageApproximation:
         layer_prox = self.target.pmatrix[:, layer_colors]
         return [x for x in self.colors if min(layer_prox[x]) > self.min_delta]
 
-    def _get_hiddenness_per_layer(self) -> float:
-        """Return the percentage of each layer covered by other layers."""
-        image = _merge_layers(*self.layers)
-        layer_masks = np.where(self.layers != -1, 1, 0)
-        image_masks = np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
-        weight_in_layer = np.sum(layer_masks * self.target.weights, axis=1)
-        weight_in_image = np.sum(image_masks * self.target.weights, axis=1)
-        return 1 - weight_in_image / weight_in_layer
-
-    def _add_one_layer(self, mask: IntA | None = None) -> None:
+    def _add_one_layer(self, mask: _IntA | None = None) -> None:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.append(self.layers, [new_layer], axis=0)
@@ -213,53 +169,25 @@ class ImageApproximation:
         if len(self.layers) >= num_layers:
             return
         for _ in range(num_layers - len(self.layers)):
-            try:
-                self._add_one_layer()
-            except ColorsExhaustedError:
-                logging.log(
-                    logging.INFO,
-                    "colors exhausted. stopping at {len(self.layers)} layers",
-                )
-                return
+            self._add_one_layer()
 
     def two_pass_fill_layers(self, num_layers: int) -> None:
-        debug_image_stem = (f"debug_{x:03d}" for x in it.count())
-
         for i in range(2, num_layers + 1):
             self.fill_layers(i)
             image = _merge_layers(*self.layers)
             image_masks = np.array(
                 [np.where(image == x, 1, 0) for x in self.layer_colors]
             )
-            # try:
-            # big_layers = _expand_layers(self.target.image, self.layers)
-            # draw_posterized_image(
-            #     self.target.vectors,
-            #     big_layers,
-            #     next(debug_image_stem),
-            # )
-            # except:
-                # breakpoint()
 
-            # print(self.layer_colors)
-            self.layers.resize((0, 512))
+            self.layers.resize((0, 512), refcheck=False)
             for mask in image_masks:
-                try:
-                    self._add_one_layer(mask=mask)
-                except ZeroDivisionError:
-                    self._add_one_layer()
-            # big_layers = _expand_layers(self.target.image, self.layers)
-            # draw_posterized_image(
-            #     self.target.vectors,
-            #     big_layers,
-            #     next(debug_image_stem),
-            # )
+                self._add_one_layer(mask=mask)
 
     # ===============================================================================
     #   Define and select new candidate layers
     # ===============================================================================
 
-    def _new_candidate_layer(self, palette_index: int) -> IntA:
+    def _new_candidate_layer(self, palette_index: int) -> _IntA:
         """Create a new candidate state.
 
         :param palette_index: the index of the color to use in the new layer
@@ -279,20 +207,7 @@ class ImageApproximation:
         state_cost_matrix = self.target.get_cost_matrix(*self.layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
-    def append_color(self, *palette_indices: int):
-        """Append a color to the current state.
-
-        :param layers: the current state or a presumed state
-        :param palette_indices: the index of the color to use in the new layer.
-            Multiple args allowed.
-        """
-        if not palette_indices:
-            return
-        new_layer = self._new_candidate_layer(palette_indices[0])
-        self.layers = np.append(self.layers, [new_layer], axis=0)
-        self.append_color(*palette_indices[1:])
-
-    def get_best_candidate_layer(self, mask: IntA | None = None) -> IntA:
+    def get_best_candidate_layer(self, mask: _IntA | None = None) -> _IntA:
         """Get the best candidate layer to add to layers.
 
         :param state_layers: the current state or a presumed state
@@ -306,7 +221,6 @@ class ImageApproximation:
             raise ColorsExhaustedError
 
         candidates = [self._new_candidate_layer(x) for x in available_colors]
-        masked_candidates = [_apply_mask(x, mask) for x in candidates]
         scores = [self.target.get_cost(state, x, mask=mask) for x in candidates]
 
         if state_cost == np.inf:
@@ -314,64 +228,26 @@ class ImageApproximation:
 
         savings = [state_cost - x for x in scores]
 
-        # if mas:
-        # best_idx = np.argmax(savings)
-        # return candidates[best_idx]
-        # breakpoint()
-
-        pixels: list[np.floating[Any]] = []
+        pixels: list[np.intp] = []
         for candidate in candidates:
             masked = _apply_mask(candidate, mask)
             weights = self.target.weights[np.where(masked != -1)]
             pixels.append(np.sum(weights))
 
-        avgs = [s / p if p > 0 else 0 for s, p in zip(savings, pixels, strict=True)]
+        avgs = [
+            float(s / p) if p > 0 else 0.0 for s, p in zip(savings, pixels, strict=True)
+        ]
 
         savings = [x / max(savings) for x in savings]
         avgs = [x / max(avgs) for x in avgs]
 
         savings_weight = 0.25
-        more_is_better = [s * savings_weight + p * (1 - savings_weight) for s, p in zip(savings, avgs)]
+        more_is_better = [
+            s * savings_weight + p * (1 - savings_weight) for s, p in zip(savings, avgs)
+        ]
 
         best_idx = np.argmax(np.array(more_is_better))
         return candidates[best_idx]
-
-        counts = (
-            np.array([np.count_nonzero(x != -1) for x in masked_candidates])   * self.target.weights[available_colors]
-        )
-
-        # counts2 = (
-        #     np.array([np.count_nonzero(x != -1) for x in candidates])
-        #     * self.target.weights[available_colors]
-        # )
-        # if mask is not None:
-        #     breakpoint()
-        # counts = [s / c for s, c in zip(savings, counts)]
-        counts = [s / c for s, c in zip(savings, counts)]
-
-        scored = [(s**2 * (1 + 1 / c), can) for s, c, can in zip(savings, counts, candidates)]
-
-        # by_savings = _get_rankings(savings)
-        by_savings = [x/max(savings) for x in savings]
-        by_pixels = [x/max(counts) for x in counts]
-
-
-        # aaa = max(counts)
-        # breakpoint()
-
-        # by_pixels = _get_rankings(counts)
-
-        savings_weight = 1
-        scored = [(s * savings_weight + c * (1 - savings_weight), can) for s, c, can in zip(by_savings, by_pixels, candidates)]
-
-
-        if len(self.layers) > 3:
-            aaa = [state_cost - x for x in scores]
-            bbb = state_cost - np.array(scores)
-            # breakpoint()
-
-        winner = max(scored, key=itemgetter(0))[1]
-        return winner
 
     def get_cache_stem(self) -> str:
         min_delta = f"{self.min_delta:05.2f}".replace(".", "_")
@@ -381,18 +257,12 @@ class ImageApproximation:
 class TargetImage:
     """A type to store input images and evaluate approximation costs."""
 
-    def __init__(
-        self,
-        path: Path,
-    ) -> None:
+    def __init__(self, path: Path) -> None:
         """Initialize a TargetImage.
 
         :param path: path to the image
         """
         self.path = path
-        # self.clusters, self.image = new_supercluster_with_quantized_image(
-        #     Supercluster, path
-        # )
 
         quantized_image = quantize_image(path)
         self.vectors = quantized_image.palette
@@ -400,9 +270,7 @@ class TargetImage:
         self.pmatrix = quantized_image.pmatrix
         self.weights = quantized_image.weights
 
-    def get_cost_matrix(
-        self, *layers: IntA
-    ) -> npt.NDArray[np.floating[Any]]:
+    def get_cost_matrix(self, *layers: _IntA) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -421,15 +289,13 @@ class TargetImage:
         )
         return cost_matrix
 
-    def get_cost(self, *layers: IntA, mask: IntA | None = None) -> float:
+    def get_cost(self, *layers: _IntA, mask: _IntA | None = None) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
             one layer.
         :return: sum of the cost between image and (state + layer)
         """
-        if not layers:
-            raise ValueError("At least one layer is required.")
         cost_matrix = self.get_cost_matrix(*layers)
         if mask is not None:
             cost_matrix[np.where(mask == 0)] = 0
@@ -437,9 +303,9 @@ class TargetImage:
 
 
 def _expand_layers(
-    quantized_image: Annotated[IntA, "(r, c)"],
-    d1_layers: Annotated[IntA, "(n, 512)"],
-) -> Annotated[IntA, "(n, r, c)"]:
+    quantized_image: Annotated[_IntA, "(r, c)"],
+    d1_layers: Annotated[_IntA, "(n, 512)"],
+) -> Annotated[_IntA, "(n, r, c)"]:
     """Expand layers to the size of the quantized image.
 
     :param quantized_image: (r, c) array with palette indices
@@ -489,11 +355,6 @@ def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
         yield from _stemize(*args[1:])
 
 
-def _new_cache_path(*args: Path | float | int | str | None, suffix: str) -> Path:
-    stem = "-".join(_stemize(*args))
-    return (paths.CACHE_DIR / stem).with_suffix(suffix)
-
-
 def posterize(
     image_path: Path,
     min_delta: float,
@@ -509,25 +370,7 @@ def posterize(
     :param num_cols: the number of colors in the posterization image
     :return: posterized image
     """
-    num_cols = 12
-    min_delta = 0
-    ignore_cache = True
-
     target = TargetImage(image_path)
-    cache_path = _new_cache_path(image_path, min_delta, num_cols, suffix=".npy")
-
-    if cache_path.exists() and not ignore_cache:
-        state = ImageApproximation(target, min_delta, layers=np.load(cache_path))
-    else:
-        state = ImageApproximation(target, min_delta)
-
+    state = ImageApproximation(target, min_delta)
     state.two_pass_fill_layers(num_cols)
-
-    state = ImageApproximation(target, min_delta, state.layer_colors)
-    print(f"{num_cols=}")
-    state.fill_layers(num_cols)
-
-    np.save(cache_path, state.layers)
-
-
     return state
