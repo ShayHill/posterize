@@ -37,24 +37,31 @@ _MAX_DIM = 1000
 
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
 _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
-_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 256)"]
-_IntA: TypeAlias = npt.NDArray[np.intp]
+_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512)"]
+_Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
+_Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
 
+@dataclasses.dataclass(frozen=True)
 class TargetImage:
-    """A type to store input images and evaluate approximation costs."""
+    """Cached array values for a quantized image and methods to calculate costs.
 
-    def __init__(self, path: Path) -> None:
-        """Initialize a TargetImage.
+    path: path to the source image
+    palette: (512, 3) array of color vectors
+    indices: (r, c) array of indices to the palette colors. This defines the source
+        image in 512 colors.
+    pmatrix: (512, 512) array of delta E values between the palette colors.
+    weights: (512,) array of the number of times each palette color is used in the
+        quantized image.
+    """
 
-        :param path: path to the image
-        """
-        self.path = path
+    palette: Annotated[npt.NDArray[np.uint8], "(512,3)"]
+    indices: Annotated[npt.NDArray[np.intp], "(r,c)"]
+    pmatrix: Annotated[npt.NDArray[np.float64], "(512,512)"]
 
-        quantized_image = quantize_image(path)
-        self.vectors = quantized_image.palette
-        self.image = quantized_image.indices
-        self.pmatrix = quantized_image.pmatrix
-        self.weights = quantized_image.weights
+    @ft.cached_property
+    def weights(self) -> Annotated[npt.NDArray[np.intp], "(512,)"]:
+        """Count the number of times each color is used in the quantized image."""
+        return np.bincount(self.indices.flatten(), minlength=len(self.palette))
 
     def get_cost_matrix(self, *layers: _Layers) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
@@ -75,7 +82,7 @@ class TargetImage:
         )
         return cost_matrix
 
-    def get_cost(self, *layers: _IntA, mask: _IntA | None = None) -> float:
+    def get_cost(self, *layers: _Layer, mask: _Mask | None = None) -> float:
         """Get the cost between self.image and state with layers applied.
 
         :param layers: layers to apply to the current state. There will only ever be
@@ -102,26 +109,6 @@ def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     return np.argmin(pmatrix[reverse_index], axis=1)
 
 
-@dataclasses.dataclass(frozen=True)
-class QuantizedImage:
-    """Cached array values for a quantized image.
-
-    palette: (512, 3) array of color vectors
-    indices: (r, c) array of indices to the palette colors. This defines the source
-        image in 512 colors.
-    pmatrix: (512, 512) array of delta E values between the palette colors.
-    weights: (512,) array of the number of times each palette color is used in the
-        quantized image.
-    """
-
-    palette: Annotated[npt.NDArray[np.uint8], "(512,3)"]
-    indices: Annotated[npt.NDArray[np.intp], "(r,c)"]
-    pmatrix: Annotated[npt.NDArray[np.float64], "(512,512)"]
-
-    @ft.cached_property
-    def weights(self) -> Annotated[npt.NDArray[np.intp], "(512,)"]:
-        """Count the number of times each color is used in the quantized image."""
-        return np.bincount(self.indices.flatten(), minlength=len(self.palette))
 
 
 def _get_cache_paths(source: Path) -> dict[str, Path]:
@@ -155,11 +142,11 @@ def clear_all_quantized_image_caches() -> None:
         path.unlink()
 
 
-def _load_quantized_image(source: Path) -> QuantizedImage:
+def _load_quantized_image(source: Path) -> TargetImage:
     """Load a quantized image from the cache.
 
     :param source: path to the source image previously quantizes
-    :return: a QuantizedImage object
+    :return: a TargetImage object
     """
     cache_paths = _get_cache_paths(source)
     if not all(path.exists() for path in cache_paths.values()):
@@ -168,13 +155,13 @@ def _load_quantized_image(source: Path) -> QuantizedImage:
     palette = np.load(cache_paths["palette"])
     indices = np.load(cache_paths["indices"])
     pmatrix = np.load(cache_paths["pmatrix"])
-    return QuantizedImage(palette, indices, pmatrix)
+    return TargetImage(palette, indices, pmatrix)
 
 
-def _dump_quantized_image(quantized_image: QuantizedImage, source: Path) -> None:
+def _dump_quantized_image(quantized_image: TargetImage, source: Path) -> None:
     """Dump a quantized image to the cache.
 
-    :param quantized_image: a QuantizedImage object
+    :param quantized_image: a TargetImage object
     :param source: path to the source image previously quantizes
     """
     cache_paths = _get_cache_paths(source)
@@ -183,12 +170,12 @@ def _dump_quantized_image(quantized_image: QuantizedImage, source: Path) -> None
             np.save(f, getattr(quantized_image, name))
 
 
-def quantize_image(source: Path, *, ignore_cache: bool = False) -> QuantizedImage:
+def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
     :param source: path to an image
     :param ignore_cache: if True, ignore any cached results
-    :return: a QuantizedImage object (palette, indices, pmatrix, weights)
+    :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
     if ignore_cache:
         clear_quantized_image_cache(source)
@@ -208,6 +195,6 @@ def quantize_image(source: Path, *, ignore_cache: bool = False) -> QuantizedImag
     )
     pmatrix = get_delta_e_matrix(palette)
 
-    quantized_image = QuantizedImage(palette, indices, pmatrix)
+    quantized_image = TargetImage(palette, indices, pmatrix)
     _dump_quantized_image(quantized_image, source)
     return quantized_image

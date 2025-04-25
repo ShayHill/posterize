@@ -30,7 +30,7 @@ from cluster_colors import SuperclusterBase
 from numpy import typing as npt
 
 from posterize.image_processing import draw_posterized_image
-from posterize.quantization import quantize_image, TargetImage
+from posterize.quantization import new_target_image, TargetImage
 
 from posterize.layers import new_empty_layers, merge_layers, apply_mask
 
@@ -52,8 +52,6 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
-
-
 
 
 @dataclasses.dataclass
@@ -215,8 +213,6 @@ class ImageApproximation:
         return f"{self.target.path.stem}"
 
 
-
-
 def _expand_layers(
     quantized_image: Annotated[_IntA, "(r, c)"],
     d1_layers: Annotated[_IntA, "(n, 512)"],
@@ -233,6 +229,7 @@ def _expand_layers(
 
 
 def draw_approximation(
+    source_image: Path,
     state: ImageApproximation,
     num_cols: int | None = None,
     stem: str = "",
@@ -242,11 +239,11 @@ def draw_approximation(
     This is for debugging how well image is visually represented and what colors
     might be "eating" others in the image.
     """
-    stem_parts = (state.get_cache_stem(), len(state.layers), num_cols, stem)
+    stem_parts = (source_image.stem, len(state.layers), num_cols, stem)
     output_stem = "-".join(_stemize(*stem_parts))
 
-    big_layers = _expand_layers(state.target.image, state.layers)
-    draw_posterized_image(state.target.vectors, big_layers[:num_cols], output_stem)
+    big_layers = _expand_layers(state.target.indices, state.layers)
+    draw_posterized_image(state.target.palette, big_layers[:num_cols], output_stem)
 
 
 def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
@@ -285,7 +282,7 @@ def posterize(
     :param num_cols: the number of colors in the posterization image
     :return: posterized image
     """
-    target = TargetImage(image_path)
+    target = new_target_image(image_path)
     state = ImageApproximation(target)
     state.two_pass_fill_layers(num_cols)
     return state

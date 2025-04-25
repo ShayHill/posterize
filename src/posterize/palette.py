@@ -50,7 +50,7 @@ def posterize_to_n_colors(
     state = posterize(image_path, 12, 6, ignore_cache=False)
     # draw_approximation(state, 6, "input_06")
     # draw_approximation(state, 12, "input_12")
-    draw_approximation(state, 6, "input_16")
+    draw_approximation(image_path, state, 6, "input_16")
     # draw_approximation(state, 24, "input_24")
 
     return
