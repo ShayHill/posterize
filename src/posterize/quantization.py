@@ -16,7 +16,7 @@ import dataclasses
 import functools as ft
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, TypeAlias
+from typing import Annotated, TypeAlias, Any
 
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
@@ -25,6 +25,7 @@ from numpy import typing as npt
 from PIL import Image
 
 from posterize.paths import CACHE_DIR
+from posterize.layers import merge_layers
 
 _CACHE_PREFIX = "quantized_"
 
@@ -36,7 +37,55 @@ _MAX_DIM = 1000
 
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
 _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
+_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 256)"]
+_IntA: TypeAlias = npt.NDArray[np.intp]
 
+class TargetImage:
+    """A type to store input images and evaluate approximation costs."""
+
+    def __init__(self, path: Path) -> None:
+        """Initialize a TargetImage.
+
+        :param path: path to the image
+        """
+        self.path = path
+
+        quantized_image = quantize_image(path)
+        self.vectors = quantized_image.palette
+        self.image = quantized_image.indices
+        self.pmatrix = quantized_image.pmatrix
+        self.weights = quantized_image.weights
+
+    def get_cost_matrix(self, *layers: _Layers) -> npt.NDArray[np.floating[Any]]:
+        """Get the cost-per-pixel between self.image and (state + layers).
+
+        :param layers: layers to apply to the current state. There will only ever be
+            0 or 1 layers. If 0, the cost matrix of the current state will be
+            returned.  If 1, the cost matrix with a layer applied over it.
+        :return: cost-per-pixel between image and (state + layer)
+
+        This should decrease after every append.
+        """
+        state = merge_layers(*layers)
+        filled = np.where(state != -1)
+        image = np.array(range(self.pmatrix.shape[0]), dtype=int)
+        cost_matrix = np.full_like(state, np.inf, dtype=float)
+        cost_matrix[filled] = (
+            self.pmatrix[image[filled], state[filled]] * self.weights[filled]
+        )
+        return cost_matrix
+
+    def get_cost(self, *layers: _IntA, mask: _IntA | None = None) -> float:
+        """Get the cost between self.image and state with layers applied.
+
+        :param layers: layers to apply to the current state. There will only ever be
+            one layer.
+        :return: sum of the cost between image and (state + layer)
+        """
+        cost_matrix = self.get_cost_matrix(*layers)
+        if mask is not None:
+            cost_matrix[np.where(mask == 0)] = 0
+        return float(np.sum(cost_matrix))
 
 def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     """Map a full set of image colors to a colormap.

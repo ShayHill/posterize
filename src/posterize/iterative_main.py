@@ -30,7 +30,9 @@ from cluster_colors import SuperclusterBase
 from numpy import typing as npt
 
 from posterize.image_processing import draw_posterized_image
-from posterize.quantization import quantize_image
+from posterize.quantization import quantize_image, TargetImage
+
+from posterize.layers import new_empty_layers, merge_layers, apply_mask
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 
@@ -52,53 +54,13 @@ class Supercluster(SuperclusterBase):
     clustering_method = "divisive"
 
 
-def _new_empty_layers() -> _IntA:
-    """Create an empty layers array.
-
-    :return: (0, 512) array of layers. Each layer is a palette index or -1 for
-        transparent.
-    """
-    return np.empty((0, 512), dtype=int)
-
-
-def _merge_layers(*layers: _IntA) -> _IntA:
-    """Merge layers into a single layer.
-
-    :param layers: n shape (512,) layer arrays, each containing at most two values:
-        * a color index that will replace one or more indices in the quantized image
-        * -1 for transparent. The first layer will be a solid color and contain no -1
-    :return: one (512,) array with the last non-transparent color in each position
-
-    Where an image is a (rows, cols) array of indices---each layer of an
-    approximation will color some of those indices with one palette index per layer,
-    and others with -1 for transparency.
-    """
-    if len(layers) == 0:
-        return np.full((512,), -1, dtype=int)
-    merged = layers[0].copy()
-    for layer in layers[1:]:
-        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
-    return merged
-
-
-def _apply_mask(layer: _IntA, map: _IntA | None) -> _IntA:
-    """Apply a map to a layer if the map is not None.
-
-    :param layer: the layer to apply the map to (shape (512,) consisting of one
-        palette index and -1 where transparent)
-    :param map: the map to apply to the layer (shape (512,)) consisting of 1s and 0s
-    :return: the layer with the map applied (shape (512,)) with, most likely,
-        additional transparent (-1) values
-    """
-    if map is None:
-        return layer
-    return np.where(map == 1, layer, -1)
 
 
 @dataclasses.dataclass
 class ImageApproximation:
     """State for an image approximation.
 
+    :param target_image: the quantized image to approximate
     :param colors: the subset of color indices (TargetImage.clusters.ixs) available
         for use in layers.
     :param layers: (n, c) array of n layers, each containing a value (color index) in
@@ -124,7 +86,7 @@ class ImageApproximation:
         else:
             self.colors = tuple(colors)
         if layers is None:
-            self.layers = _new_empty_layers()
+            self.layers = new_empty_layers()
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
@@ -174,7 +136,7 @@ class ImageApproximation:
     def two_pass_fill_layers(self, num_layers: int) -> None:
         for i in range(2, num_layers + 1):
             self.fill_layers(i)
-            image = _merge_layers(*self.layers)
+            image = merge_layers(*self.layers)
             image_masks = np.array(
                 [np.where(image == x, 1, 0) for x in self.layer_colors]
             )
@@ -213,7 +175,7 @@ class ImageApproximation:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        state = _merge_layers(*self.layers)
+        state = merge_layers(*self.layers)
         state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
 
@@ -230,7 +192,7 @@ class ImageApproximation:
 
         pixels: list[np.intp] = []
         for candidate in candidates:
-            masked = _apply_mask(candidate, mask)
+            masked = apply_mask(candidate, mask)
             weights = self.target.weights[np.where(masked != -1)]
             pixels.append(np.sum(weights))
 
@@ -253,52 +215,6 @@ class ImageApproximation:
         return f"{self.target.path.stem}"
 
 
-class TargetImage:
-    """A type to store input images and evaluate approximation costs."""
-
-    def __init__(self, path: Path) -> None:
-        """Initialize a TargetImage.
-
-        :param path: path to the image
-        """
-        self.path = path
-
-        quantized_image = quantize_image(path)
-        self.vectors = quantized_image.palette
-        self.image = quantized_image.indices
-        self.pmatrix = quantized_image.pmatrix
-        self.weights = quantized_image.weights
-
-    def get_cost_matrix(self, *layers: _IntA) -> npt.NDArray[np.floating[Any]]:
-        """Get the cost-per-pixel between self.image and (state + layers).
-
-        :param layers: layers to apply to the current state. There will only ever be
-            0 or 1 layers. If 0, the cost matrix of the current state will be
-            returned.  If 1, the cost matrix with a layer applied over it.
-        :return: cost-per-pixel between image and (state + layer)
-
-        This should decrease after every append.
-        """
-        state = _merge_layers(*layers)
-        filled = np.where(state != -1)
-        image = np.array(range(self.pmatrix.shape[0]), dtype=int)
-        cost_matrix = np.full_like(state, np.inf, dtype=float)
-        cost_matrix[filled] = (
-            self.pmatrix[image[filled], state[filled]] * self.weights[filled]
-        )
-        return cost_matrix
-
-    def get_cost(self, *layers: _IntA, mask: _IntA | None = None) -> float:
-        """Get the cost between self.image and state with layers applied.
-
-        :param layers: layers to apply to the current state. There will only ever be
-            one layer.
-        :return: sum of the cost between image and (state + layer)
-        """
-        cost_matrix = self.get_cost_matrix(*layers)
-        if mask is not None:
-            cost_matrix[np.where(mask == 0)] = 0
-        return float(np.sum(cost_matrix))
 
 
 def _expand_layers(
