@@ -33,7 +33,7 @@ _CACHE_PREFIX = "quantized_"
 # because you can only create arrays of a certain size. A smaller value might speed
 # up testing, but the quantization cache will need to be cleared if this value
 # changes.
-_MAX_DIM = 1000
+_MAX_DIM = 500
 
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
 _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
@@ -185,6 +185,7 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
     image = Image.open(source)
     if max(image.size) > _MAX_DIM:
         image.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
+    print(f"Quantizing {image.size} image")
     image = image.convert("RGBA")
 
     rgba_colors = np.array(image).reshape(-1, 4)
