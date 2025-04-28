@@ -48,15 +48,23 @@ def posterize_to_n_colors(
     print(f"{image_path.stem} {min_dist}")
 
     state = posterize(image_path, 6, ignore_cache=False)
-    # draw_approximation(state, 6, "input_06")
-    # draw_approximation(state, 12, "input_12")
     draw_approximation(image_path, state, 6, "input_16")
-    # draw_approximation(state, 24, "input_24")
-
 
     colors = state.layer_colors
     vectors = state.target.palette[colors]
 
+    dist = [1, 1, 1, 1, 1, 1]
+
+    pvectors = vectors
+    color_blocks = sliver_color_blocks(pvectors, list(map(float, dist)))
+    output_name = PALETTES / f"{image_path.stem}.svg"
+    write_palette(image_path, color_blocks, output_name)
+
+#     key = (image_path.stem, *tuple(palette))
+#     if key not in seen:
+#         write_palette(image_path, color_blocks, output_name)
+#         su.write_png_from_svg(INKSCAPE, output_name)
+#     seen.add(key)
     return
 
     for boost_delta_h in range(11):
@@ -150,7 +158,8 @@ if __name__ == "__main__":
         # "tilda.jpg",
         # "you_the_living.jpg",
     ]
-    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.webp")]
+    pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
@@ -178,4 +187,4 @@ if __name__ == "__main__":
 # industry, perseverance, and frugality # make fortune yield - benjamin franklin
 # strength, well being, and health
 # no man is your enemy. no man is your friend. every man is your teacher. - florence
-# scovel shinn
+# scovel hinn
