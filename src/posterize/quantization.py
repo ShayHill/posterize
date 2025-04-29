@@ -12,11 +12,9 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 :created: 2025-04-24
 """
 
-import dataclasses
-import functools as ft
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, TypeAlias, Any
+from typing import Annotated, Any, TypeAlias
 
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
@@ -24,8 +22,8 @@ from cluster_colors import stack_pool_cut_colors
 from numpy import typing as npt
 from PIL import Image
 
-from posterize.paths import CACHE_DIR
 from posterize.layers import merge_layers
+from posterize.paths import CACHE_DIR
 
 _CACHE_PREFIX = "quantized_"
 
@@ -42,27 +40,85 @@ _Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
 _Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
 
 
-@dataclasses.dataclass(frozen=True)
+def _min_max_normalize(
+    array: npt.NDArray[np.intp | np.floating[Any]],
+) -> npt.NDArray[np.float64]:
+    """Normalize an array to the range [0, 1].
+
+    :param array: array to normalize
+    :return: normalized array or array of zeros if all values are the same
+    """
+    min_val = np.min(array)
+    max_val = np.max(array)
+    if min_val == max_val:
+        return np.zeros_like(array, dtype=np.float64)
+    return (array - min_val) / (max_val - min_val)
+
+
 class TargetImage:
     """Cached array values for a quantized image and methods to calculate costs.
 
-    path: path to the source image
-    palette: (512, 3) array of color vectors
-    indices: (r, c) array of indices to the palette colors. This defines the source
-        image in 512 colors.
-    pmatrix: (512, 512) array of delta E values between the palette colors.
-    weights: (512,) array of the number of times each palette color is used in the
-        quantized image.
+    These are intended to be created deterministacally from an image where the weight
+    of each color in the palette will correspond to the number of times that color is
+    used in the image, but I have created a `weights` attribute setter for
+    experimentation with *weighting the weights* with, for instance, color vibrance
+    values.
     """
 
-    palette: Annotated[npt.NDArray[np.uint8], "(512,3)"]
-    indices: Annotated[npt.NDArray[np.intp], "(r,c)"]
-    pmatrix: Annotated[npt.NDArray[np.float64], "(512,512)"]
+    def __init__(
+        self,
+        palette: Annotated[npt.NDArray[np.uint8], "(512,3)"],
+        indices: Annotated[npt.NDArray[np.intp], "(r,c)"],
+        pmatrix: Annotated[npt.NDArray[np.float64], "(512,512)"],
+        weights: None | Annotated[npt.NDArray[np.float64], "(512,)"] = None,
+    ) -> None:
+        """Initialize a TargetImage object.
 
-    @ft.cached_property
-    def weights(self) -> Annotated[npt.NDArray[np.intp], "(512,)"]:
-        """Count the number of times each color is used in the quantized image."""
-        return np.bincount(self.indices.flatten(), minlength=len(self.palette))
+        :param palette: (512, 3) array of color vectors
+        :param indices: (r, c) array of indices to the palette colors. This defines
+            the source image in 512 colors.
+        :param pmatrix: (512, 512) array of delta E values between the palette
+            colors.
+        :param weights: (512,) optionally initialize with something other than the
+            default weights (pixel count per color).
+        """
+        self.palette = palette
+        self.indices = indices
+        self.pmatrix = pmatrix
+        self._weights = weights
+
+        # cache and expose the default weights for weight transformation functions.
+        self.default_weights = np.bincount(
+            self.indices.flatten(), minlength=512
+        ).astype(np.float64)
+
+    @property
+    def weights(self) -> npt.NDArray[np.float64]:
+        """Get a weight for each color in the palette.
+
+        By default, this will be a min-maxed normalization of the pixel count for
+        each palette color. Min-max normalization isn't required for palette
+        generation or transformation by multiplicative combination, but it simplifies
+        transforming these values into a weighted average.
+        """
+        if self._weights is not None:
+            return self._weights
+        self._weights = _min_max_normalize(self.default_weights)
+        return self._weights
+
+    @weights.setter
+    def weights(self, value: npt.NDArray[np.float64]) -> None:
+        """Set the weights for each color in the palette.
+
+        :param value: (512,) array of weights for each color in the palette.
+
+        This is expected to be a transformation of the default weights.
+        """
+        self._weights = value
+
+    def reset_weights(self) -> None:
+        """Reset weights to the number of times each color is used in the image."""
+        self._weights = None
 
     def get_cost_matrix(self, *layers: _Layers) -> npt.NDArray[np.floating[Any]]:
         """Get the cost-per-pixel between self.image and (state + layers).
