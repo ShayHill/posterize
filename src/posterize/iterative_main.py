@@ -21,6 +21,7 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import dataclasses
 from pathlib import Path
 from typing import Annotated, Any, Iterable, Iterator, TypeAlias
@@ -35,6 +36,7 @@ from posterize.quantization import new_target_image, TargetImage
 from posterize.layers import new_empty_layers, merge_layers, apply_mask
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
+_FltA: TypeAlias = npt.NDArray[np.float64]
 
 
 class ColorsExhaustedError(Exception):
@@ -52,6 +54,25 @@ class Supercluster(SuperclusterBase):
     quality_centroid = "weighted_medoid"
     assignment_centroid = "weighted_medoid"
     clustering_method = "divisive"
+
+
+def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
+    """Scale an array so the maximum value is 1.
+
+    :param array: the array to scale
+    :return: the scaled array
+
+    This is used to scale layer savings and layer weights to a similar range before
+    taking a weighted average. I did not use min-max scaling because I would prefer
+    layers with similar savings or weights to be treated as roughly equivalent. I
+    don't want to treat one as 1 (full weight) and the other as 0 (no weight) when
+    they are very nearly equal.
+    """
+    array = np.array(list(floats))
+    max_val = np.max(array)
+    if max_val == 0:
+        return array
+    return array / max_val
 
 
 @dataclasses.dataclass
@@ -73,12 +94,13 @@ class ImageApproximation:
     def __init__(
         self,
         target_image: TargetImage,
-        # min_delta: float,
         colors: Iterable[int] | None = None,
         layers: _IntA | None = None,
+        *,
+        savings_weight: float = 0.25,
+        vibrant_weight: float = 0,
     ) -> None:
         self.target = target_image
-        # self.min_delta = min_delta
         if colors is None:
             self.colors = tuple(range(512))
         else:
@@ -88,6 +110,8 @@ class ImageApproximation:
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
+        self.savings_weight = savings_weight
+        self.vibrant_weight = vibrant_weight
 
     @property
     def layer_colors(self) -> list[int]:
@@ -167,6 +191,15 @@ class ImageApproximation:
         state_cost_matrix = self.target.get_cost_matrix(*self.layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
+    def _sum_masked_weight(self, layer: _IntA, mask: None | _IntA) -> np.float64:
+        """Mask a layer then sum the weights.
+
+        This is a subroutine for get_best_candidate_layer.
+        """
+        masked = apply_mask(layer, mask)
+        weights = self.target.weights[np.where(masked != -1)]
+        return np.sum(weights)
+
     def get_best_candidate_layer(self, mask: _IntA | None = None) -> _IntA:
         """Get the best candidate layer to add to layers.
 
@@ -186,31 +219,33 @@ class ImageApproximation:
         if state_cost == np.inf:
             state_cost = max(scores)
 
-        savings = [state_cost - x for x in scores]
-
-        pixels: list[np.intp] = []
-        for candidate in candidates:
-            masked = apply_mask(candidate, mask)
-            weights = self.target.weights[np.where(masked != -1)]
-            pixels.append(np.sum(weights))
-
-        avgs = [
-            float(s / p) if p > 0 else 0.0 for s, p in zip(savings, pixels, strict=True)
+        layer_savings = _set_max_val_to_one([state_cost - x for x in scores])
+        layer_weights = _set_max_val_to_one(
+            [self._sum_masked_weight(x, mask) for x in candidates]
+        )
+        layer_averages = [
+            float(s / p) if p > 0 else 0.0
+            for s, p in zip(layer_savings, layer_weights, strict=True)
         ]
 
-        savings = [x / max(savings) for x in savings]
-        avgs = [x / max(avgs) for x in avgs]
-
-        savings_weight = 0.25
         more_is_better = [
-            s * savings_weight + p * (1 - savings_weight) for s, p in zip(savings, avgs)
+            s * self.savings_weight + a * (1 - self.savings_weight)
+            for s, a in zip(layer_savings, layer_averages)
         ]
 
         best_idx = np.argmax(np.array(more_is_better))
         return candidates[best_idx]
 
-    def get_cache_stem(self) -> str:
-        return f"{self.target.path.stem}"
+    def get_param_infix(self) -> tuple[str, str]:
+        """Get a string to use in the filename for the current state."""
+        sw = _percentage_infix(self.savings_weight)
+        vw = _percentage_infix(self.vibrant_weight)
+        return sw, vw
+
+
+def _percentage_infix(float_: float) -> str:
+    """Get a string to use in the filename for a percentage."""
+    return f"{int(float_*100):02}"
 
 
 def _expand_layers(
@@ -240,7 +275,7 @@ def draw_approximation(
     might be "eating" others in the image.
     """
     stem_parts = (source_image.stem, len(state.layers), num_cols, stem)
-    output_stem = "-".join(_stemize(*stem_parts))
+    output_stem = "-".join([*_stemize(*stem_parts), *state.get_param_infix()])
 
     big_layers = _expand_layers(state.target.indices, state.layers)
     draw_posterized_image(state.target.palette, big_layers[:num_cols], output_stem)
