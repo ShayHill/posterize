@@ -103,7 +103,6 @@ class ImageApproximation:
 
     target_image: TargetImage
     colors: tuple[int, ...]
-    # min_delta: float
 
     def __init__(
         self,
@@ -140,6 +139,13 @@ class ImageApproximation:
     def get_layer_color(self, index: int) -> int:
         """Get the color of a layer."""
         return int(np.max(self.layers[index]))
+
+    def get_layer_weight(self, index: int) -> float:
+        """Get the weight of a layer."""
+        image = merge_layers(*self.layers)
+        color = self.get_layer_color(index)
+        return np.count_nonzero(image == color)
+
 
     def get_available_colors(self) -> list[int]:
         """Get available colors in the image."""

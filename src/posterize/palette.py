@@ -4,6 +4,7 @@
 :created: 2025-02-11
 """
 
+import itertools as it
 from pathlib import Path
 
 from cluster_colors import SuperclusterBase
@@ -43,7 +44,6 @@ def posterize_to_n_colors(
     vibrant_weight: float | None = None,
 ) -> list[int] | None:
 
-    print(f"posterizing {image_path.stem}")
 
     state = posterize(
         image_path, 6, savings_weight=savings_weight, vibrant_weight=vibrant_weight
@@ -53,53 +53,28 @@ def posterize_to_n_colors(
             image_path, num_cols, net_cols, state.savings_weight, state.vibrant_weight
         )
     )
+    print(f"posterizing {stem}")
+
     draw_approximation(image_path, state, 6, stem)
 
     colors = state.layer_colors
+
     vectors = state.target.palette[colors]
 
-    dist = [1, 1, 1, 1, 1, 1]
+    dist = [1.0] * len(colors)
 
-    color_blocks = sliver_color_blocks(vectors, list(map(float, dist)))
+    color_blocks = sliver_color_blocks(vectors, dist)
     output_name = PALETTES / f"{stem}.svg"
     write_palette(image_path, color_blocks, output_name)
     return
 
 
+s_ws = [0.5, 0.25]
+v_ws = [0.0, 0.5]
+
 if __name__ == "__main__":
     pics = [
-        # "adidas.jpg",
-        # "bird.jpg",
-        # "blue.jpg",
-        # "broadway.jpg",
-        # "bronson.jpg",
-        # "cafe_at_arles.jpg",
-        # "dolly.jpg",
-        # "dutch.jpg",
-        # "Ernest - Figs.jpg",
-        # "eyes.jpg",
-        # "Flâneur - Al Carbon.jpg",
-        # "Flâneur - Coffee.jpg",
-        # "Flâneur - Japan.jpg",
-        # "Flâneur - Japan2.jpg",
-        # "Flâneur - Lavenham.jpg",
-        # "girl.jpg",
-        # "girl_p.jpg",
-        # "hotel.jpg",
-        # "Johannes Vermeer - The Milkmaid.jpg",
-        # "lena.jpg",
-        # "lion.jpg",
-        # "manet.jpg",
-        # "parrot.jpg",
-        # "pencils.jpg",
-        # "Retrofuturism - One.jpg",
-        # "roy_green_car.jpg",
         "Sci-Fi - Outland.jpg",
-        # "seb.jpg",
-        # "starry_night.jpg",
-        # "taleb.jpg",
-        # "tilda.jpg",
-        # "you_the_living.jpg",
     ]
     pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.webp")]
     pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
@@ -112,10 +87,17 @@ if __name__ == "__main__":
         if not image_path.exists():
             print(f"skipping {image_path}")
             continue
-        print(f"processing {image_path}")
+        print(f"processing {image_path.name}")
         try:
             seen: set[tuple[int, ...]] = set()
-            _ = posterize_to_n_colors(image_path, num_cols=6, net_cols=6)
+            for sw, vw in it.product(s_ws, v_ws):
+                _ = posterize_to_n_colors(
+                    image_path,
+                    num_cols=6,
+                    net_cols=6,
+                    savings_weight=sw,
+                    vibrant_weight=vw,
+                )
         except Exception as e:
             raise e
 
