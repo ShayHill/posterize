@@ -29,7 +29,7 @@ from typing import Annotated, Any, Iterable, Iterator, TypeAlias
 import numpy as np
 from cluster_colors import SuperclusterBase
 from numpy import typing as npt
-
+from posterize.color_attributes import get_chromacity, get_purity
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_target_image, TargetImage
 
@@ -37,6 +37,18 @@ from posterize.layers import new_empty_layers, merge_layers, apply_mask
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
+_RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
+
+
+def _get_vibrance(rgb: _RGB) -> float:
+    """Get the vibrance of a color.
+
+    The vibrance is the distance from gray to the color. A color with a vibrance of 0
+    is a shade of gray, while a color with a vibrance of 1 is a pure color with maximum
+    saturation and lightness.
+    """
+    chroma_weight = 0.75
+    return get_chromacity(rgb) * chroma_weight + get_purity(rgb) * (1 - chroma_weight)
 
 
 class ColorsExhaustedError(Exception):
@@ -113,6 +125,18 @@ class ImageApproximation:
         self.savings_weight = savings_weight
         self.vibrant_weight = vibrant_weight
 
+        vibrancies = np.array(list(map(_get_vibrance, self.target.palette)))
+        self.target.weights *= 1 - self.vibrant_weight
+        vibrancies *= self.vibrant_weight
+        self.target.weights += vibrancies
+        # breakpoint()
+        # self.target.weights = np.array(
+        #     [
+        #         w * (1 - self.vibrant_weight) + v
+        #         for w, v in zip(self.target.weights, vibrancies)
+        #     ]
+        # )
+
     @property
     def layer_colors(self) -> list[int]:
         """Get the non-transparent color in each layer."""
@@ -123,18 +147,11 @@ class ImageApproximation:
         return int(np.max(self.layers[index]))
 
     def get_available_colors(self) -> list[int]:
-        """Get available colors in the i.wmage.
-
-        The available colors will depend on three things:
-        1. The 512 colors in the quantized image
-        2. The colors used in previous layers
-        3. The min_delta defined for the current state
-        """
+        """Get available colors in the image."""
         if len(self.layers) == 0:
             return list(self.colors)
         layer_colors = self.layer_colors
         assert -1 not in layer_colors
-        # layer_prox = self.target.pmatrix[:, layer_colors]
         return [x for x in self.colors if x not in layer_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
@@ -317,6 +334,6 @@ def posterize(
     :return: posterized image
     """
     target = new_target_image(image_path)
-    state = ImageApproximation(target)
+    state = ImageApproximation(target, savings_weight=0.25, vibrant_weight=0.75)
     state.two_pass_fill_layers(num_cols)
     return state
