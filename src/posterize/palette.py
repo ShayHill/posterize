@@ -4,21 +4,15 @@
 :created: 2025-02-11
 """
 
-import functools as ft
 from pathlib import Path
 
-import numpy as np
-import svg_ultralight as su
-from basic_colormath import rgb_to_hsv, rgbs_to_hsv
-from cluster_colors import Members, SuperclusterBase
+from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
-from numpy import typing as npt
 from palette_image.color_block_ops import sliver_color_blocks
 from palette_image.svg_display import write_palette
 
 from posterize import paths
 from posterize.iterative_main import (
-    Supercluster,
     draw_approximation,
     posterize,
     stemize,
