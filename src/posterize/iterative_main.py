@@ -39,6 +39,8 @@ _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
 _RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
 
+_DEFAULT_SAVINGS_WEIGHT = 0.25
+_DEFAULT_VIBRANT_WEIGHT = 0.0
 
 def _get_vibrance(rgb: _RGB) -> float:
     """Get the vibrance of a color.
@@ -109,8 +111,8 @@ class ImageApproximation:
         colors: Iterable[int] | None = None,
         layers: _IntA | None = None,
         *,
-        savings_weight: float = 0.25,
-        vibrant_weight: float = 0,
+        savings_weight: float | None = None,
+        vibrant_weight: float | None = None,
     ) -> None:
         self.target = target_image
         if colors is None:
@@ -122,20 +124,13 @@ class ImageApproximation:
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
-        self.savings_weight = savings_weight
-        self.vibrant_weight = vibrant_weight
+        self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
+        self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
         vibrancies = np.array(list(map(_get_vibrance, self.target.palette)))
         self.target.weights *= 1 - self.vibrant_weight
         vibrancies *= self.vibrant_weight
         self.target.weights += vibrancies
-        # breakpoint()
-        # self.target.weights = np.array(
-        #     [
-        #         w * (1 - self.vibrant_weight) + v
-        #         for w, v in zip(self.target.weights, vibrancies)
-        #     ]
-        # )
 
     @property
     def layer_colors(self) -> list[int]:
@@ -291,49 +286,48 @@ def draw_approximation(
     This is for debugging how well image is visually represented and what colors
     might be "eating" others in the image.
     """
-    stem_parts = (source_image.stem, len(state.layers), num_cols, stem)
-    output_stem = "-".join([*_stemize(*stem_parts), *state.get_param_infix()])
-
     big_layers = _expand_layers(state.target.indices, state.layers)
-    draw_posterized_image(state.target.palette, big_layers[:num_cols], output_stem)
+    draw_posterized_image(state.target.palette, big_layers[:num_cols], stem)
 
 
-def _stemize(*args: Path | float | int | str | None) -> Iterator[str]:
+def stemize(*args: Path | float | int | str | None) -> Iterator[str]:
     """Convert args to strings and filter out empty strings."""
     if not args:
         return
-    if args[0] is None:
-        yield from _stemize(*args[1:])
-    elif isinstance(args[0], str):
-        yield args[0]
-        yield from _stemize(*args[1:])
-    elif isinstance(args[0], Path):
-        yield args[0].stem
-        yield from _stemize(*args[1:])
-    elif isinstance(args[0], float):
-        yield f"{args[0]:05.2f}".replace(".", "_")
-        yield from _stemize(*args[1:])
+    arg, *tail = args
+    if arg is None:
+        pass
+    elif isinstance(arg, str):
+        yield arg
+    elif isinstance(arg, Path):
+        yield arg.stem
+    elif isinstance(arg, float):
+        assert 0 <= arg <= 1
+        yield _percentage_infix(arg)
     else:
-        assert isinstance(args[0], int)
-        yield f"{args[0]:03d}"
-        yield from _stemize(*args[1:])
+        assert isinstance(arg, int)
+        yield f"{arg:03d}"
+    yield from stemize(*tail)
 
 
 def posterize(
     image_path: Path,
     num_cols: int,
     *,
-    ignore_cache: bool = True,
+    savings_weight: None | float = None,
+    vibrant_weight: None | float = None,
 ) -> ImageApproximation:
     """Posterize an image.
 
     :param image_path: path to the image
-    :param min_delta: the minimum delta_e between colors in the final image. This
-        will be lowered if necessary to achieve the desired number of colors.
     :param num_cols: the number of colors in the posterization image
+    :param savings_weight: weight for the savings metric vs average savings
+    :param vibrant_weight: weight for the vibrance metric vs savings metric
     :return: posterized image
     """
     target = new_target_image(image_path)
-    state = ImageApproximation(target, savings_weight=0.25, vibrant_weight=0.75)
+    state = ImageApproximation(
+        target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
+    )
     state.two_pass_fill_layers(num_cols)
     return state
