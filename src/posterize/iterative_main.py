@@ -115,11 +115,11 @@ class ImageApproximation:
     ) -> None:
         self.target = target_image
         if colors is None:
-            self.colors = tuple(range(512))
+            self.colors = tuple(range(len(target_image.palette)))
         else:
             self.colors = tuple(colors)
         if layers is None:
-            self.layers = new_empty_layers()
+            self.layers = np.empty((0, len(self.colors)), dtype=int)
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
@@ -181,7 +181,7 @@ class ImageApproximation:
                 [np.where(image == x, 1, 0) for x in self.layer_colors]
             )
 
-            self.layers.resize((0, 512), refcheck=False)
+            self.layers.resize((0, self.layers.shape[1]), refcheck=False)
             for mask in image_masks:
                 self._add_one_layer(mask=mask)
 

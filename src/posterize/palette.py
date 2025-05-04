@@ -11,6 +11,9 @@ from cluster_colors import SuperclusterBase
 from lxml.etree import _Element as EtreeElement  # type: ignore
 from palette_image.color_block_ops import sliver_color_blocks
 from palette_image.svg_display import write_palette
+from typing import Annotated, TypeAlias
+from numpy import typing as npt
+import numpy as np
 
 from posterize import paths
 from posterize.iterative_main import (
@@ -19,11 +22,25 @@ from posterize.iterative_main import (
     stemize,
 )
 
+from basic_colormath import get_delta_e
 
-INKSCAPE = Path(r"C:\Program Files\Inkscape\bin\inkscape")
+_RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
+
+_WHITE = (255, 255, 255)
 
 PALETTES = paths.WORKING / "palettes"
 PALETTES.mkdir(exist_ok=True)
+
+centers = {
+    "J Sultan Ali - Fisher Women": (.5, .25),
+    "J Sultan Ali - Toga": (.5, .25)
+}
+
+
+def _delta_e_from_white(rgb: _RGB) -> float:
+    """Calculate the delta E from white for a given RGB color."""
+    r, g, b = rgb
+    return get_delta_e((r, g, b), _WHITE)
 
 
 class SumSupercluster(SuperclusterBase):
@@ -44,9 +61,11 @@ def posterize_to_n_colors(
     vibrant_weight: float | None = None,
 ) -> list[int] | None:
 
-
     state = posterize(
-        image_path, 6, savings_weight=savings_weight, vibrant_weight=vibrant_weight
+        image_path,
+        num_cols,
+        savings_weight=savings_weight,
+        vibrant_weight=vibrant_weight,
     )
     stem = "-".join(
         stemize(
@@ -55,17 +74,29 @@ def posterize_to_n_colors(
     )
     print(f"posterizing {stem}")
 
-    draw_approximation(image_path, state, 6, stem)
+    colors = state.target.palette[state.layer_colors]
+    tuples = [tuple(x) for x in colors]
+    colors = [x for x in colors if _delta_e_from_white(x) > 16][:net_cols]
+    reqd_no = tuples.index(tuple(colors[-1])) + 1
+    if len(colors) < net_cols:
+        print(f"--- discarding {stem}")
+        return posterize_to_n_colors(
+            image_path,
+            num_cols + 1,
+            net_cols,
+            savings_weight=savings_weight,
+            vibrant_weight=vibrant_weight,
+        )
 
-    colors = state.layer_colors
+    draw_approximation(image_path, state, reqd_no, stem)
 
-    vectors = state.target.palette[colors]
+    dist = [1.0] * net_cols
 
-    dist = [1.0] * len(colors)
-
-    color_blocks = sliver_color_blocks(vectors, dist)
+    color_blocks = sliver_color_blocks(colors, dist)
     output_name = PALETTES / f"{stem}.svg"
-    write_palette(image_path, color_blocks, output_name)
+    center = centers.get(image_path.stem)
+    print(f" ooooooooooooooooooooooooooooooo    {center=}")
+    write_palette(image_path, color_blocks, output_name, center=center)
     return
 
 
@@ -78,6 +109,7 @@ if __name__ == "__main__":
     ]
     pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.webp")]
     pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
+    pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.png")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
@@ -93,7 +125,7 @@ if __name__ == "__main__":
             for sw, vw in it.product(s_ws, v_ws):
                 _ = posterize_to_n_colors(
                     image_path,
-                    num_cols=6,
+                    num_cols=24,
                     net_cols=6,
                     savings_weight=sw,
                     vibrant_weight=vw,

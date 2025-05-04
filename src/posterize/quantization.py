@@ -89,7 +89,7 @@ class TargetImage:
 
         # cache and expose the default weights for weight transformation functions.
         self.default_weights = np.bincount(
-            self.indices.flatten(), minlength=512
+            self.indices.flatten(), minlength=self.palette.shape[0]
         ).astype(np.float64)
 
     @property
@@ -233,6 +233,7 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
     :param ignore_cache: if True, ignore any cached results
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
+    ignore_cache = True
     if ignore_cache:
         clear_quantized_image_cache(source)
     with suppress(FileNotFoundError):
