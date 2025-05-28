@@ -37,38 +37,62 @@ Use a clustering algorithm to line up colors.
 """
 
 import functools as ft
+import itertools as it
 import random
 from collections.abc import Sequence
 from operator import attrgetter, itemgetter
+from typing import Annotated
 
+import numpy as np
+import svg_ultralight as su
+from basic_colormath import floats_to_uint8, get_delta_e, rgb_to_hex
 from cluster_colors import Cluster, DivisiveSupercluster, Members
-from cluster_colors.type_hints import Vectors, VectorsLike
+from cluster_colors.type_hints import VectorsLike
+from posterize.iterative_main import _get_vibrance
+from posterize.color_attributes import get_chromacity, get_purity
+from numpy import typing as npt
 
-Supercluster = DivisiveSupercluster
-
-colors = [(x % 11 * 20, x // 11 * 20, random.randint(0, 255)) for x in range(0, 100, 5)]
-
-random.shuffle(colors)
+_RGBs = Annotated[npt.NDArray[np.uint8], (-1, 3)]
+_RGB = Annotated[npt.NDArray[np.floating], (-1, 3)]
 
 
-def _try_centroid(clusters: Sequence[Cluster], index: int) -> int | None:
+
+
+def _split_cluster(cluster: Cluster) -> tuple[Cluster, Cluster]:
+    """Split a cluster as a supercluster to catch the reasignment of members."""
+    if len(cluster.members) == 2:
+        return cluster.split()
+    members = cluster.members
+    supercluster = DivisiveSupercluster(members, ixs=cluster.ixs)
+    supercluster.set_n(2)
+    one, two = supercluster.clusters
+    return one, two
+
+
+def _get_centroid(cluster: Cluster) -> npt.NDArray[np.floating]:
+    return np.mean(cluster.members.vectors[cluster.ixs], axis=0)
+
+
+def _try_get_centroid_at_index(
+    clusters: Sequence[Cluster], index: int
+) -> npt.NDArray[np.floating] | None:
     """Return the item at the given index or None if the index is out of range."""
     if index < 0:
         return None
     try:
-        return clusters[index].centroid
+        return _get_centroid(clusters[index])
     except IndexError:
         return None
 
 
-def _get_proximity(members: Members, ix_a: int | None, ix_b: int | None) -> float:
-    if None in (ix_a, ix_b):
+def _get_proximity(members: Members, ix_a: _RGB | None, ix_b: _RGB | None) -> float:
+    if ix_a is None or ix_b is None:
         return 0.0
-    return float(members.pmatrix[ix_a][ix_b])
+    return get_delta_e(ix_a, ix_b)
 
 
 def _get_order_error(
-    members: Members, beg: int | None, end: int | None, mid_a: int, mid_b: int
+    members: Members, beg: _RGB | None, end: _RGB | None, mid_a: _RGB, mid_b: _RGB
 ) -> float:
     """Return the distance from beg to mid_a plus the distance from mid_b to end.
 
@@ -95,7 +119,7 @@ def _get_order_error(
     return _get_proximity(members, beg, mid_a) + _get_proximity(members, mid_b, end)
 
 
-def _atomize_spectrum(spectrum: list[Cluster]) -> None:
+def _atomize_clusters_into_spectrum(spectrum: list[Cluster]) -> None:
     worst = max(spectrum, key=attrgetter("error"))
     if worst.error == 0.0:
         return
@@ -103,45 +127,35 @@ def _atomize_spectrum(spectrum: list[Cluster]) -> None:
     infix_order_error = ft.partial(
         _get_order_error,
         worst.members,
-        _try_centroid(spectrum, worst_index - 1),
-        _try_centroid(spectrum, worst_index + 1),
+        _try_get_centroid_at_index(spectrum, worst_index - 1),
+        _try_get_centroid_at_index(spectrum, worst_index + 1),
     )
 
-    new_a, new_b = worst.split()
-    mid_a, mid_b = (x.centroid for x in (new_a, new_b))
+    new_a, new_b = _split_cluster(worst)
+    mid_a, mid_b = (_get_centroid(c) for c in (new_a, new_b))
 
     if infix_order_error(mid_b, mid_a) < infix_order_error(mid_a, mid_b):
         new_a, new_b = new_b, new_a
     spectrum[worst_index : worst_index + 1] = [new_a, new_b]
 
-    _atomize_spectrum(spectrum)
-
-
-from typing import Annotated
-
-import numpy as np
-from basic_colormath import floats_to_uint8
-from numpy import typing as npt
-
-
-# def atomize_clusters_into_spectrum(clusters: Sequence[Cluster]) -> list[Cluster]:
-#     """Atomize a list of clusters into a spectrum.
-
-#     :param clusters: A list of clusters to atomize.
-#     :return: A list of clusters that have been atomized into a spectrum.
-#     """
-#     spectrum = list(clusters)
-#     _atomize_spectrum(spectrum)
-#     return spectrum
+    _atomize_clusters_into_spectrum(spectrum)
 
 
 def atomize_into_spectrum(
     colors: VectorsLike,
-) -> Annotated[npt.NDArray[np.uint8], (-1, 3)]:
+) -> _RGBs:
     spectrum = [Cluster.from_vectors(colors)]
-    _atomize_spectrum(spectrum)
+    _atomize_clusters_into_spectrum(spectrum)
     spectrum_centroids = [cluster.centroid for cluster in spectrum]
     return floats_to_uint8(spectrum[0].members.vectors[spectrum_centroids])
+
+
+def _get_vibrance_weighted_axis(supercluster: DivisiveSupercluster) -> npt.NDArray[np.floating]:
+    colors = supercluster.members.vectors
+    weights = [(_get_vibrance(color) * 100) ** 2 for color in colors]
+    weighted = np.hstack((colors, np.array(weights).reshape(-1, 1)))
+    vibrance_weighted = DivisiveSupercluster.from_stacked_vectors(weighted)
+    return vibrance_weighted.clusters[0].axis_of_highest_variance
 
 
 def by_highest_variance(
@@ -154,9 +168,53 @@ def by_highest_variance(
     def rel_dist(x: tuple[float, float, float]) -> float:
         return np.dot(abc, x)
 
+
     rgbs = [(r, g, b) for r, g, b in colors]
     rgbs = sorted(rgbs, key=rel_dist)
     return floats_to_uint8(rgbs)
+
+def _sort_along_axis(supercluster: DivisiveSupercluster, axis: npt.NDArray[np.floating] | None = None) -> list[Cluster]:
+    if axis is None:
+        input_n = supercluster.n
+        supercluster.set_n(1)
+        axis = supercluster.clusters[0].axis_of_highest_variance
+        print(axis)
+        # axis = _get_vibrance_weighted_axis(supercluster)
+        # print(f"{axis} v")
+        supercluster.set_n(input_n)
+    rgbs = [(r, g, b) for r, g, b in (_get_centroid(c) for c in supercluster.clusters)]
+
+    def rel_dist(x: int) -> float:
+        return np.dot(axis, rgbs[x])
+
+    ixs = sorted(range(len(rgbs)), key=rel_dist)
+    return [supercluster.clusters[x] for x in ixs]
+
+def _try_spectrum(
+    supercluster: DivisiveSupercluster,
+) -> list[tuple[float, float, float]] | None:
+
+    clusters = _sort_along_axis(supercluster)
+    rgbs = [(r, g, b) for r, g, b in map(_get_centroid, clusters)]
+
+    if len(rgbs) < 3:
+        return rgbs
+
+    for prev, this, aftr in zip(rgbs, rgbs[1:], rgbs[2:], strict=False):
+        if get_delta_e(prev, this) > get_delta_e(prev, aftr):
+            return None
+    return rgbs
+
+    # if len(supercluster.clusters) == 1:
+    #     return None
+    # supercluster.set_n(2)
+    # one, two = supercluster.clusters
+    # one_centroid = _get_centroid(one)
+    # two_centroid = _get_centroid(two)
+    # if np.dot(one_centroid, two_centroid) < 0:
+    #     return None
+    # return [one_centroid, two_centroid]
+
 
 
 def by_highest_variance_strict(
@@ -192,7 +250,6 @@ def by_highest_variance_strict(
         worst = max(bad_fits, key=itemgetter(0))
         discard.append(worst[1])
         ixs.remove(worst[1])
-        print("removing")
 
     rgbs = [
         (int(r), int(g), int(b))
@@ -242,7 +299,6 @@ def by_highest_variance2(
         worst = max(bad_fits, key=itemgetter(0))
         discard.append(worst[1])
         ixs.remove(worst[1])
-        print("removing")
 
     ixs_lists = [[x] for x in ixs]
     while len(discard) > 0:
@@ -250,8 +306,8 @@ def by_highest_variance2(
         s_ix, q_ix = np.unravel_index(np.argmin(ixs_x_discard), ixs_x_discard.shape)
         ixs_lists[s_ix].append(discard[q_ix])
         discard = np.delete(discard, q_ix)
-    clusters = [Cluster(members = cluster.members, ixs = x) for x in ixs_lists]
-    _atomize_spectrum(clusters)
+    clusters = [Cluster(members=cluster.members, ixs=x) for x in ixs_lists]
+    _atomize_clusters_into_spectrum(clusters)
     ixs = [cluster.centroid for cluster in clusters]
 
     rgbs = [
@@ -273,43 +329,63 @@ def by_highest_variance2(
 #     rgbs = sorted(rgbs, key=rel_dist)
 
 
-aaa = atomize_into_spectrum(colors)
-bbb = by_highest_variance(colors)
-bbb = by_highest_variance_strict(colors)
-ccc = by_highest_variance2(colors)
+if __name__ == "__main__":
+    colors = [
+        (x % 11 * 20, x // 11 * 20, 0) for x in range(0, 100, 5)
+    ]
+    colors = [
+        (random.randint(0, 255), random.randint(0, 100), random.randint(0, 255))
+        for _ in range(100)
+    ]
+    random.shuffle(colors)
+    weights = [(get_chromacity(color) * 100) ** 2 for color in colors]
+    weighted = np.hstack((colors, np.array(weights).reshape(-1, 1)))
+    sup = DivisiveSupercluster.from_stacked_vectors(weighted)
 
+    for n in range(1, len(colors)+1):
+        sup.set_n(n)
+        aaa = _try_spectrum(sup)
+        if aaa is None:
+            print(f"{n=}")
+            sup.set_n(n-1)
+            break
 
+    sup.set_n(1)
+    spectrum = _sort_along_axis(sup)
+    _atomize_clusters_into_spectrum(spectrum)
+    spectrum = np.array([(int(x), int(y), int(z)) for x, y, z in (s.get_as_vector() for s in spectrum)])
 
-import svg_ultralight as su
-from basic_colormath import rgb_to_hex
+    sup = DivisiveSupercluster.from_vectors(colors)
 
+    sup.set_n(1)
+    spectrum2 = _sort_along_axis(sup)
+    _atomize_clusters_into_spectrum(spectrum2)
+    spectrum2 = np.array([(int(x), int(y), int(z)) for x, y, z in (s.get_as_vector() for s in spectrum2)])
+    
+    bbb = by_highest_variance(colors)
+    bbb = by_highest_variance_strict(colors)
+    ccc = by_highest_variance2(colors)
 
-def new_bound_rect(color: tuple[int, int, int]) -> su.BoundElement:
-    bbox = su.BoundingBox(0, 0, 10, 50)
-    rect = su.new_bbox_rect(bbox, fill=rgb_to_hex(color))
-    return su.BoundElement(rect, bbox)
+    def _new_bound_rect(color: tuple[int, int, int]) -> su.BoundElement:
+        bbox = su.BoundingBox(0, 0, 10, 50)
+        rect = su.new_bbox_rect(bbox, fill=rgb_to_hex(color))
+        return su.BoundElement(rect, bbox)
 
+    rects = [_new_bound_rect(c) for c in spectrum]
+    for left, right in it.pairwise(rects):
+        right.x = left.x2
 
-rects: list[su.BoundElement] = [new_bound_rect(aaa[0])]
-for color in aaa[1:]:
-    rects.append(new_bound_rect(color))
-    rects[-1].x = rects[-2].x2
+    rects.append(_new_bound_rect(spectrum2[0]))
+    rects[-1].y = rects[-2].y2
+    for color in spectrum2[1:]:
+        rects.append(_new_bound_rect(color))
+        rects[-1].y = rects[-2].y
+        rects[-1].x = rects[-2].x2
+    # rects: list[su.BoundElement] = [_new_bound_rect(spectrum[0])]
+    # for color in spectrum[1:]:
+    #     rects.append(_new_bound_rect(color))
+    #     rects[-1].x = rects[-2].x2
 
-rects.append(new_bound_rect(bbb[0]))
-rects[-1].y = rects[-2].y2
-for color in bbb[1:]:
-    rects.append(new_bound_rect(color))
-    rects[-1].y = rects[-2].y
-    rects[-1].x = rects[-2].x2
-
-rects.append(new_bound_rect(ccc[0]))
-rects[-1].y = rects[-2].y2
-for color in ccc[1:]:
-    rects.append(new_bound_rect(color))
-    rects[-1].y = rects[-2].y
-    rects[-1].x = rects[-2].x2
-
-root = su.new_svg_root_around_bounds(*rects)
-root.extend([x.elem for x in rects])
-_ = su.write_svg("test.svg", root)
-
+    root = su.new_svg_root_around_bounds(*rects)
+    root.extend([x.elem for x in rects])
+    _ = su.write_svg("test.svg", root)

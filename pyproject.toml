@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  # "conventional-with-data",
+  "coverage",
   "pre-commit",
   "pytest",
   "tox",
