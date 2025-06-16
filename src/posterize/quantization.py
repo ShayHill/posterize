@@ -233,6 +233,7 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
     :param ignore_cache: if True, ignore any cached results
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
+    #TODO: remove ignore_cache = True when the cache is stable
     ignore_cache = True
     if ignore_cache:
         clear_quantized_image_cache(source)
@@ -255,4 +256,5 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
 
     quantized_image = TargetImage(palette, indices, pmatrix)
     _dump_quantized_image(quantized_image, source)
+
     return quantized_image

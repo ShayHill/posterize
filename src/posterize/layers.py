@@ -12,20 +12,12 @@ color index would *not* improve the approximation, the value is set to -1.
 :created: 2025-04-25
 """
 
+from typing import TypeAlias
+
 import numpy as np
 from numpy import typing as npt
-from typing import Annotated, TypeAlias
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
-
-
-def new_empty_layers() -> _IntA:
-    """Create an empty layers array.
-
-    :return: (0, 512) array of layers. Each layer is a palette index or -1 for
-        transparent.
-    """
-    return np.empty((0, 512), dtype=int)
 
 
 def merge_layers(*layers: _IntA) -> _IntA:

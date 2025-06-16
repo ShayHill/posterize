@@ -6,14 +6,14 @@
 
 # pyright: reportPrivateUsage = false
 
-from posterize.paths import PROJECT
+# from posterize.paths import PROJECT
 from lxml.etree import Element
 from lxml.etree import _Element as EtreeElement  # type: ignore
 
 from posterize.type_target_image import TargetImage
 import pytest
 
-TEST_IMAGE = PROJECT / "tests/resources/lion.jpg"
+# TEST_IMAGE = PROJECT / "tests/resources/lion.jpg"
 
 
 class TestTargetImage:

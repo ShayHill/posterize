@@ -107,15 +107,14 @@ if __name__ == "__main__":
     pics = [
         "Sci-Fi - Outland.jpg",
     ]
-    pics = [x.name for x in paths.PROJECT.glob("tests/resources/*.webp")]
-    pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.jpg")]
-    pics += [x.name for x in paths.PROJECT.glob("tests/resources/*.png")]
+    pics = [x.name for x in paths._PROJECT.glob("tests/resources/*.webp")]
+    pics += [x.name for x in paths._PROJECT.glob("tests/resources/*.jpg")]
+    pics += [x.name for x in paths._PROJECT.glob("tests/resources/*.png")]
     # pics = ["bronson.jpg"]
     # for pic in pics:
     #     print(pic)
     for pic in pics:
-
-        image_path = paths.PROJECT / f"tests/resources/{pic}"
+        image_path = paths._PROJECT / f"tests/resources/{pic}"
         if not image_path.exists():
             print(f"skipping {image_path}")
             continue
@@ -125,13 +124,14 @@ if __name__ == "__main__":
             for sw, vw in it.product(s_ws, v_ws):
                 _ = posterize_to_n_colors(
                     image_path,
-                    num_cols=24,
-                    net_cols=6,
+                    num_cols=12,
+                    net_cols=12,
                     savings_weight=sw,
                     vibrant_weight=vw,
                 )
         except Exception as e:
             raise e
+        break
 
     print("done")
 

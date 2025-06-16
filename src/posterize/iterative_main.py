@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import dataclasses
 from pathlib import Path
-from typing import Annotated, Any, Iterable, Iterator, TypeAlias
+from typing import Annotated, Iterable, Iterator, TypeAlias
 
 import numpy as np
 from cluster_colors import SuperclusterBase
@@ -33,21 +33,37 @@ from posterize.color_attributes import get_chromacity, get_purity
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_target_image, TargetImage
 
-from posterize.layers import new_empty_layers, merge_layers, apply_mask
+from posterize.layers import merge_layers, apply_mask
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
 _RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
 
+# Default weight for sum savings vs. average savings. Average savings is, by default,
+# weighted highly. These values are used when selecting the best candidate for the
+# next layer color. A higher average savings weight means colors that improve the
+# approximation a lot in a small area are chosen over colors that improve the
+# approximation a tiny amount over a large area. _DEFAULT_SAVINGS_WEIGHT is the
+# weight given to sum savings. (1 - _DEFAULT_SAVINGS_WEIGHT) is the weight given to
+# average savings.
 _DEFAULT_SAVINGS_WEIGHT = 0.25
+
+
+# A higher number (1.0 is maximum) means colors that are more vibrant are more likely
+# to be selected as layer colors. The default is 0.0, which will be good for most
+# images, but the parameter is available if you have an overall drab image with a few
+# bright highlights and want to pay less attention to the background.
 _DEFAULT_VIBRANT_WEIGHT = 0.0
+
 
 def _get_vibrance(rgb: _RGB) -> float:
     """Get the vibrance of a color.
 
-    The vibrance is the distance from gray to the color. A color with a vibrance of 0
-    is a shade of gray, while a color with a vibrance of 1 is a pure color with maximum
-    saturation and lightness.
+    Vibrance is a measure of how colorful a color is. Specifically, it is a weighted
+    average of the chromacity (closeness to color wheel) and purity (absence of gray)
+    of a color. Black would have a chromacity of 0 and a purity of 1. Red would have
+    a chromacity of 1 and a purity of 1. Pure gray would have a chromacity of 0 and a
+    purity of 0.
     """
     chroma_weight = 0.75
     return get_chromacity(rgb) * chroma_weight + get_purity(rgb) * (1 - chroma_weight)
@@ -61,15 +77,6 @@ class ColorsExhaustedError(Exception):
         super().__init__(self.message)
 
 
-class Supercluster(SuperclusterBase):
-    """A SuperclusterBase that uses divisive clustering."""
-
-    quality_metric = "avg_error"
-    quality_centroid = "weighted_medoid"
-    assignment_centroid = "weighted_medoid"
-    clustering_method = "divisive"
-
-
 def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
     """Scale an array so the maximum value is 1.
 
@@ -81,6 +88,9 @@ def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
     layers with similar savings or weights to be treated as roughly equivalent. I
     don't want to treat one as 1 (full weight) and the other as 0 (no weight) when
     they are very nearly equal.
+
+    The scaling here allows for values to cluster around 1.0 if the input values are
+    all high.
     """
     array = np.array(list(floats))
     max_val = np.max(array)
@@ -98,7 +108,13 @@ class ImageApproximation:
         for use in layers.
     :param layers: (n, c) array of n layers, each containing a value (color index) in
         colors and -1 for transparent. The first layer will be a solid color and
-        contain no -1 values.
+        contain no -1 values. This is a parameter for algorithms that might want to
+        restart an ImageApproximation from a previous state, but you can for the most
+        part ignore it.
+    :param savings_weight: optional kwarg only param - weight for sum savings vs
+        average savings when selecting a layer color.
+    :param vibrant_weight: optional kwarg only param - [0.0, 1.0] increase tendency
+        to select vibrant colors.
     """
 
     target_image: TargetImage
@@ -136,16 +152,13 @@ class ImageApproximation:
         """Get the non-transparent color in each layer."""
         return [int(np.max(x)) for x in self.layers]
 
-    def get_layer_color(self, index: int) -> int:
-        """Get the color of a layer."""
-        return int(np.max(self.layers[index]))
+    def get_layer_masks(self) -> _IntA:
+        """Get the masks for each layer.
 
-    def get_layer_weight(self, index: int) -> float:
-        """Get the weight of a layer."""
+        :return: (n, r, c) array of masks for each layer
+        """
         image = merge_layers(*self.layers)
-        color = self.get_layer_color(index)
-        return np.count_nonzero(image == color)
-
+        return np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
 
     def get_available_colors(self) -> list[int]:
         """Get available colors in the image."""
@@ -161,43 +174,58 @@ class ImageApproximation:
         self.layers = np.append(self.layers, [new_layer], axis=0)
 
     def fill_layers(self, num_layers: int) -> None:
-        """Add layers until there are num_layers. Then check lower layers.
+        """Add layers until there are num_layers.
 
-        :param state: the ImageApproximation instance to be updated.
         :param num_layers: the number of layers to end up with. Will silently return
             fewer layers if all colors are exhausted.
         :effect: update state.layers
         """
         if len(self.layers) >= num_layers:
             return
-        for _ in range(num_layers - len(self.layers)):
+        try:
             self._add_one_layer()
+        except ColorsExhaustedError:
+            return
+        self.fill_layers(num_layers)
 
     def two_pass_fill_layers(self, num_layers: int) -> None:
-        for i in range(2, num_layers + 1):
-            self.fill_layers(i)
-            image = merge_layers(*self.layers)
-            image_masks = np.array(
-                [np.where(image == x, 1, 0) for x in self.layer_colors]
-            )
+        """Fill layers to create masks then fill masks to create layers.
 
+        :param num_layers: the number of layers to end up with. Will silently return
+            fewer layers if all colors are exhausted.
+        :effect: update state.layers
+
+        The first pass is only to create masks. The colors selected in the first pass
+        will try to approximate a larger area than the mask will cover. This creates
+        the Japanese flag effect described in the module docstring.
+
+        The second pass selects colors that only try to approximate the mask area.
+        """
+        if len(self.layers) >= num_layers:
+            return
+        try:
+            self._add_one_layer()
+        except ColorsExhaustedError:
+            return
+        if len(self.layers) >= 2:
+            layer_masks = self.get_layer_masks()
             self.layers.resize((0, self.layers.shape[1]), refcheck=False)
-            for mask in image_masks:
+            for mask in layer_masks:
                 self._add_one_layer(mask=mask)
+        self.two_pass_fill_layers(num_layers)
 
     # ===============================================================================
     #   Define and select new candidate layers
     # ===============================================================================
 
     def _new_candidate_layer(self, palette_index: int) -> _IntA:
-        """Create a new candidate state.
+        """Create a new candidate layer.
 
         :param palette_index: the index of the color to use in the new layer
-        :param state: a ImageApproximation instance
-
-        A candidate is the current state with state indices replaced with
-        palette_index where palette_index has a lower cost that the index in state at
-        that position.
+        :return: a new candidate layer with the same shape as the quantized image.
+            Pixels where palette_index would improve the approximation are set to
+            palette_index. Pixels where palette_index would not improve the
+            approximation are set to -1.
 
         If there are no layers, the candidate will be a solid color.
         """
@@ -253,13 +281,6 @@ class ImageApproximation:
 
         best_idx = np.argmax(np.array(more_is_better))
         return candidates[best_idx]
-
-    def get_param_infix(self) -> tuple[str, str]:
-        """Get a string to use in the filename for the current state."""
-        sw = _percentage_infix(self.savings_weight)
-        vw = _percentage_infix(self.vibrant_weight)
-        return sw, vw
-
 
 def _percentage_infix(float_: float) -> str:
     """Get a string to use in the filename for a percentage."""
