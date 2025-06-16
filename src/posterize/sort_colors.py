@@ -48,8 +48,8 @@ import svg_ultralight as su
 from basic_colormath import floats_to_uint8, get_delta_e, rgb_to_hex
 from cluster_colors import Cluster, DivisiveSupercluster, Members
 from cluster_colors.type_hints import VectorsLike
-from posterize.iterative_main import _get_vibrance
-from posterize.color_attributes import get_chromacity, get_purity
+from posterize.iterative_main import get_vibrance
+from posterize.color_attributes import get_chromacity
 from numpy import typing as npt
 
 _RGBs = Annotated[npt.NDArray[np.uint8], (-1, 3)]
@@ -152,7 +152,7 @@ def atomize_into_spectrum(
 
 def _get_vibrance_weighted_axis(supercluster: DivisiveSupercluster) -> npt.NDArray[np.floating]:
     colors = supercluster.members.vectors
-    weights = [(_get_vibrance(color) * 100) ** 2 for color in colors]
+    weights = [(get_vibrance(color) * 100) ** 2 for color in colors]
     weighted = np.hstack((colors, np.array(weights).reshape(-1, 1)))
     vibrance_weighted = DivisiveSupercluster.from_stacked_vectors(weighted)
     return vibrance_weighted.clusters[0].axis_of_highest_variance

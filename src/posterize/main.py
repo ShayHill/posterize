@@ -27,9 +27,8 @@ from pathlib import Path
 from typing import Annotated, Iterable, Iterator, TypeAlias
 
 import numpy as np
-from cluster_colors import SuperclusterBase
 from numpy import typing as npt
-from posterize.color_attributes import get_chromacity, get_purity
+from posterize.color_attributes import get_vibrance
 from posterize.image_processing import draw_posterized_image
 from posterize.quantization import new_target_image, TargetImage
 
@@ -54,19 +53,6 @@ _DEFAULT_SAVINGS_WEIGHT = 0.25
 # images, but the parameter is available if you have an overall drab image with a few
 # bright highlights and want to pay less attention to the background.
 _DEFAULT_VIBRANT_WEIGHT = 0.0
-
-
-def _get_vibrance(rgb: _RGB) -> float:
-    """Get the vibrance of a color.
-
-    Vibrance is a measure of how colorful a color is. Specifically, it is a weighted
-    average of the chromacity (closeness to color wheel) and purity (absence of gray)
-    of a color. Black would have a chromacity of 0 and a purity of 1. Red would have
-    a chromacity of 1 and a purity of 1. Pure gray would have a chromacity of 0 and a
-    purity of 0.
-    """
-    chroma_weight = 0.75
-    return get_chromacity(rgb) * chroma_weight + get_purity(rgb) * (1 - chroma_weight)
 
 
 class ColorsExhaustedError(Exception):
@@ -142,7 +128,7 @@ class ImageApproximation:
         self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
         self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
-        vibrancies = np.array(list(map(_get_vibrance, self.target.palette)))
+        vibrancies = np.array(list(map(get_vibrance, self.target.palette)))
         self.target.weights *= 1 - self.vibrant_weight
         vibrancies *= self.vibrant_weight
         self.target.weights += vibrancies

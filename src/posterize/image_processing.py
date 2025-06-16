@@ -12,7 +12,7 @@ import os
 from basic_colormath import float_tuple_to_8bit_int_tuple
 import numpy as np
 from lxml import etree
-from lxml.etree import _Element as EtreeElement  # type: ignore
+from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 from numpy import typing as npt
 from PIL import Image
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg

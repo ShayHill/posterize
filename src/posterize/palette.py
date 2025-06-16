@@ -8,7 +8,7 @@ import itertools as it
 from pathlib import Path
 
 from cluster_colors import SuperclusterBase
-from lxml.etree import _Element as EtreeElement  # type: ignore
+from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 from palette_image.color_block_ops import sliver_color_blocks
 from palette_image.svg_display import write_palette
 from typing import Annotated, TypeAlias
@@ -16,11 +16,12 @@ from numpy import typing as npt
 import numpy as np
 
 from posterize import paths
-from posterize.iterative_main import (
+from posterize import (
     draw_approximation,
     posterize,
-    stemize,
 )
+
+from posterize.main import stemize
 
 from basic_colormath import get_delta_e
 
@@ -32,8 +33,8 @@ PALETTES = paths.WORKING / "palettes"
 PALETTES.mkdir(exist_ok=True)
 
 centers = {
-    "J Sultan Ali - Fisher Women": (.5, .25),
-    "J Sultan Ali - Toga": (.5, .25)
+    "J Sultan Ali - Fisher Women": (0.5, 0.25),
+    "J Sultan Ali - Toga": (0.5, 0.25),
 }
 
 

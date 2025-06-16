@@ -8,7 +8,7 @@
 
 # from posterize.paths import PROJECT
 from lxml.etree import Element
-from lxml.etree import _Element as EtreeElement  # type: ignore
+from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 
 from posterize.type_target_image import TargetImage
 import pytest
