@@ -1,4 +1,4 @@
-"""irite images to disk, convert arrays to images, call potrace.
+"""Write images to disk, convert arrays to images, call potrace.
 
 :author: Shay Hill
 :created: 2024-10-13
@@ -6,6 +6,7 @@
 
 import subprocess
 from pathlib import Path
+
 from typing import Annotated, TypeAlias, Any
 import os
 
@@ -28,7 +29,7 @@ _IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,r,c)"]
 _TMP_BMP = CACHE_DIR / "temp.bmp"
 
 
-def _write_svg_from_mono_bmp(path_to_mono_bmp: Path) -> Path:
+def _write_svg_from_mono_bmp(path_to_mono_bmp: str | os.PathLike[str]) -> Path:
     """Write an svg from a monochrome image.
 
     :param path_to_mono_bitmap: path to the monochrome image.
@@ -37,7 +38,7 @@ def _write_svg_from_mono_bmp(path_to_mono_bmp: Path) -> Path:
     Images passed in this library will be not only grayscale, but monochrome. So, a
     blacklevel of 0.5 can be hardcoded.
     """
-    svg_path = (paths.CACHE / path_to_mono_bmp.name).with_suffix(".svg")
+    svg_path = (paths.CACHE / Path(path_to_mono_bmp).name).with_suffix(".svg")
     # fmt: off
     command = [
         str(paths.POTRACE),
@@ -46,7 +47,6 @@ def _write_svg_from_mono_bmp(path_to_mono_bmp: Path) -> Path:
         "-k", str(0.5),  # black level
         "-u", "1",  # do not scale svg (points correspond to pixels array)
         "--flat",  # all paths combined in one element
-        # "-t", str(self._tsize),  # remove speckles
         "-b", "svg",  # output format
         "--opttolerance", "2.8",  # higher values make paths smoother
     ]
@@ -55,7 +55,7 @@ def _write_svg_from_mono_bmp(path_to_mono_bmp: Path) -> Path:
     return svg_path
 
 
-def get_layer_color_index(layer: _IndexMatrix) -> int:
+def _get_layer_color_index(layer: _IndexMatrix) -> int:
     """Get the color index of a layer.
 
     :param layer: (r, c) array where -1 is transparent and opaque pixels are all
@@ -65,12 +65,16 @@ def get_layer_color_index(layer: _IndexMatrix) -> int:
     Just a bunch of sanity checks.
     """
     layer_values = sorted(np.unique(layer))
-    if len(layer_values) == 1:
-        assert layer_values[0] != -1
-        return layer_values[0]
-    assert len(layer_values) == 2
-    assert layer_values[0] == -1
-    return layer_values[1]
+
+    match layer_values:
+        case [color_index]:
+            assert color_index != -1
+            return color_index
+        case [-1, color_index]:
+            return color_index
+        case _:
+            msg = "A layer needs one colors index and -1 for any transparent pixels."
+            raise ValueError(msg)
 
 
 def _write_mono_bmp(layer: _IndexMatrix) -> Path:
@@ -91,7 +95,10 @@ def _write_mono_bmp(layer: _IndexMatrix) -> Path:
     return output_path
 
 
-def _get_svg_path_from_potrace_output(path_to_potrace_output: Path, fill_color: tuple[float, float, float]) -> EtreeElement:
+def _get_svg_path_from_potrace_output(
+    path_to_potrace_output: str | os.PathLike[str],
+    fill_color: tuple[float, float, float],
+) -> EtreeElement:
     """Get an svg `g` element from the svg output of potrace.
 
     :param path_to_mono_bmp: path to the monochrome image.
@@ -104,6 +111,7 @@ def _get_svg_path_from_potrace_output(path_to_potrace_output: Path, fill_color: 
     _ = update_element(elem, fill=svg_color_tuple(fill_rgb))
     return elem
 
+
 def _new_background_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeElement:
     """Create a background element.
 
@@ -115,11 +123,12 @@ def _new_background_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeEl
     The background is the first layer, and it's just a rectangle filled with the color
     of the first layer.
     """
-    bg_col = colormap[get_layer_color_index(layer)]
+    bg_col = colormap[_get_layer_color_index(layer)]
     height, width = layer.shape
     return new_element(
         "rect", x=0, y=0, width=width, height=height, fill=svg_color_tuple(bg_col)
     )
+
 
 def _new_foreground_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeElement:
     """Create a foreground element.
@@ -129,11 +138,12 @@ def _new_foreground_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeEl
         filled with the same index colormap.
     :return: a `g` element describing a path filled with the color indexed in layer
 
-    The foreground is the last layer, and it's just a group of paths filled with the
-    color of the last layer.
+    A foreground element is any element above the background. These are `<g>`
+    elements copied directly from Potrace output then colored with a color from the
+    colormap.
     """
     mono_bmp = _write_mono_bmp(layer)
-    elem_col = get_layer_color_index(layer)
+    elem_col = _get_layer_color_index(layer)
     mono_svg = _write_svg_from_mono_bmp(mono_bmp)
     elem = _get_svg_path_from_potrace_output(mono_svg, colormap[elem_col])
     os.unlink(mono_bmp)
@@ -150,7 +160,6 @@ def draw_posterized_image(
     :param layers: list of (r, c) arrays where -1 is transparent and opaque pixels are
         all filled with the same index colormap.
     :param filename_stem: the filename stem for the output svg
-
     """
     root = new_svg_root(x_=0, y_=0, width_=layers.shape[2], height_=layers.shape[1])
     root.append(_new_background_elem(colormap, layers[0]))
@@ -158,5 +167,3 @@ def draw_posterized_image(
         root.append(_new_foreground_elem(colormap, layer))
     svg_path = (paths.WORKING / filename_stem).with_suffix(".svg")
     _ = write_svg(svg_path, root)
-
-

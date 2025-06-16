@@ -8,7 +8,6 @@ import itertools as it
 from pathlib import Path
 
 from cluster_colors import SuperclusterBase
-from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 from palette_image.color_block_ops import sliver_color_blocks
 from palette_image.svg_display import write_palette
 from typing import Annotated, TypeAlias
@@ -44,13 +43,13 @@ def _delta_e_from_white(rgb: _RGB) -> float:
     return get_delta_e((r, g, b), _WHITE)
 
 
-class SumSupercluster(SuperclusterBase):
-    """A SuperclusterBase that uses divisive clustering."""
+# class SumSupercluster(SuperclusterBase):
+#     """A SuperclusterBase that uses divisive clustering."""
 
-    quality_metric = "max_error"
-    quality_centroid = "weighted_medoid"
-    assignment_centroid = "weighted_medoid"
-    clustering_method = "divisive"
+#     quality_metric = "max_error"
+#     quality_centroid = "weighted_medoid"
+#     assignment_centroid = "weighted_medoid"
+#     clustering_method = "divisive"
 
 
 def posterize_to_n_colors(

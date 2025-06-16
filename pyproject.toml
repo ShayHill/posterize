@@ -7,13 +7,8 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "basic-colormath>=0.4",
-  "cairosvg",
   "cluster-colors>=0.13",
   "numpy",
-  "paragraphs",
-  "scipy",
-  "stacked-quantile",
   "svg-ultralight",
   "palette_image @ git+ssh://git@github.com/ShayHill/palette_image"
 ]
@@ -24,10 +19,9 @@ dev = [
   "pre-commit",
   "pytest",
   "tox",
-  "types-lxml",
-  "types-pillow"
 ]
 
+# "types-pillow"
 
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
