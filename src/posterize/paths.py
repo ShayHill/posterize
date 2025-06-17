@@ -13,9 +13,3 @@ with TemporaryFile() as f:
 _PROJECT = Path(__file__, "../../..").resolve()
 _BINARIES = _PROJECT / "binaries"
 POTRACE = _BINARIES / "potrace.exe"
-
-# hold intermediate images used for calculations
-WORKING = _BINARIES / "working"
-
-for directory in (_BINARIES, WORKING):
-    directory.mkdir(parents=True, exist_ok=True)
