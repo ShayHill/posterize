@@ -4,10 +4,11 @@
 :created: 2024-05-09
 """
 
-from posterize.main import draw_approximation, posterize
-
+from posterize.image_processing import draw_approximation
+from posterize.main import ImageApproximation, posterize
 
 __all__ = [
+    "ImageApproximation",
     "draw_approximation",
     "posterize",
 ]

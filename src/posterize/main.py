@@ -22,17 +22,15 @@ would completely cover the pink layer anyway.
 from __future__ import annotations
 
 from collections.abc import Iterable
-import dataclasses
 from pathlib import Path
-from typing import Annotated, Iterable, Iterator, TypeAlias
+from typing import Annotated, Iterable, TypeAlias, cast
 
 import numpy as np
 from numpy import typing as npt
-from posterize.color_attributes import get_vibrance
-from posterize.image_processing import draw_posterized_image
-from posterize.quantization import new_target_image, TargetImage
 
-from posterize.layers import merge_layers, apply_mask
+from posterize.color_attributes import get_vibrance
+from posterize.layers import apply_mask, merge_layers
+from posterize.quantization import TargetImage, new_target_image
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
@@ -69,11 +67,11 @@ def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
     :param array: the array to scale
     :return: the scaled array
 
-    This is used to scale layer savings and layer weights to a similar range before
-    taking a weighted average. I did not use min-max scaling because I would prefer
-    layers with similar savings or weights to be treated as roughly equivalent. I
-    don't want to treat one as 1 (full weight) and the other as 0 (no weight) when
-    they are very nearly equal.
+    This is used to scale layer savings and layer weights (all positive numbers) to a
+    similar range before taking a weighted average. I did not use min-max scaling
+    because I would prefer layers with similar savings or weights to be treated as
+    roughly equivalent. I don't want to treat one as 1 (full weight) and the other as
+    0 (no weight) when they are very nearly equal.
 
     The scaling here allows for values to cluster around 1.0 if the input values are
     all high.
@@ -85,7 +83,6 @@ def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
     return array / max_val
 
 
-@dataclasses.dataclass
 class ImageApproximation:
     """State for an image approximation.
 
@@ -103,9 +100,6 @@ class ImageApproximation:
         to select vibrant colors.
     """
 
-    target_image: TargetImage
-    colors: tuple[int, ...]
-
     def __init__(
         self,
         target_image: TargetImage,
@@ -121,14 +115,15 @@ class ImageApproximation:
         else:
             self.colors = tuple(colors)
         if layers is None:
-            self.layers = np.empty((0, len(self.colors)), dtype=int)
+            self.layers = np.empty((0, len(target_image.palette)), dtype=int)
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
         self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
         self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
-        vibrancies = np.array(list(map(get_vibrance, self.target.palette)))
+        palette = cast(Iterable[npt.NDArray[np.uint8]], self.target.palette)
+        vibrancies = np.array(list(map(get_vibrance, palette)))
         self.target.weights *= 1 - self.vibrant_weight
         vibrancies *= self.vibrant_weight
         self.target.weights += vibrancies
@@ -194,7 +189,7 @@ class ImageApproximation:
         except ColorsExhaustedError:
             return
         if len(self.layers) >= 2:
-            layer_masks = self.get_layer_masks()
+            layer_masks = cast(Iterable[_IntA], self.get_layer_masks())
             self.layers.resize((0, self.layers.shape[1]), refcheck=False)
             for mask in layer_masks:
                 self._add_one_layer(mask=mask)
@@ -215,12 +210,13 @@ class ImageApproximation:
 
         If there are no layers, the candidate will be a solid color.
         """
-        solid = np.full(self.target.pmatrix.shape[0], palette_index)
+        solid = np.ones(self.target.pmatrix.shape[0], dtype=int) * palette_index
         if len(self.layers) == 0:
             return solid
 
         solid_cost_matrix = self.target.get_cost_matrix(solid)
-        state_cost_matrix = self.target.get_cost_matrix(*self.layers)
+        layers = cast(Iterable[npt.NDArray[np.intp]], self.layers)
+        state_cost_matrix = self.target.get_cost_matrix(*layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
     def _sum_masked_weight(self, layer: _IntA, mask: None | _IntA) -> np.float64:
@@ -238,7 +234,8 @@ class ImageApproximation:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        state = merge_layers(*self.layers)
+        layers = cast(Iterable[npt.NDArray[np.intp]], self.layers)
+        state = merge_layers(*layers)
         state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
 
@@ -265,62 +262,8 @@ class ImageApproximation:
             for s, a in zip(layer_savings, layer_averages)
         ]
 
-        best_idx = np.argmax(np.array(more_is_better))
+        best_idx = np.argmax(np.array(more_is_better, dtype=np.float64))
         return candidates[best_idx]
-
-def _percentage_infix(float_: float) -> str:
-    """Get a string to use in the filename for a percentage."""
-    return f"{int(float_*100):02}"
-
-
-def _expand_layers(
-    quantized_image: Annotated[_IntA, "(r, c)"],
-    d1_layers: Annotated[_IntA, "(n, 512)"],
-) -> Annotated[_IntA, "(n, r, c)"]:
-    """Expand layers to the size of the quantized image.
-
-    :param quantized_image: (r, c) array with palette indices
-    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
-        palette index in [0, 511].
-    :return: (n, r, c) array of layers, each layer with the same shape as the
-        quantized image.
-    """
-    return np.array([x[quantized_image] for x in d1_layers])
-
-
-def draw_approximation(
-    source_image: Path,
-    state: ImageApproximation,
-    num_cols: int | None = None,
-    stem: str = "",
-) -> None:
-    """Infer a name from the state and draw the approximation.
-
-    This is for debugging how well image is visually represented and what colors
-    might be "eating" others in the image.
-    """
-    big_layers = _expand_layers(state.target.indices, state.layers)
-    draw_posterized_image(state.target.palette, big_layers[:num_cols], stem)
-
-
-def stemize(*args: Path | float | int | str | None) -> Iterator[str]:
-    """Convert args to strings and filter out empty strings."""
-    if not args:
-        return
-    arg, *tail = args
-    if arg is None:
-        pass
-    elif isinstance(arg, str):
-        yield arg
-    elif isinstance(arg, Path):
-        yield arg.stem
-    elif isinstance(arg, float):
-        assert 0 <= arg <= 1
-        yield _percentage_infix(arg)
-    else:
-        assert isinstance(arg, int)
-        yield f"{arg:03d}"
-    yield from stemize(*tail)
 
 
 def posterize(
@@ -329,16 +272,18 @@ def posterize(
     *,
     savings_weight: None | float = None,
     vibrant_weight: None | float = None,
+    ignore_quantized_image_cache: bool = False,
 ) -> ImageApproximation:
     """Posterize an image.
 
     :param image_path: path to the image
-    :param num_cols: the number of colors in the posterization image
+    :param num_cols: the number of colors in the posterization image. If not enough
+        colors are available, will silently return fewer layers / colors.
     :param savings_weight: weight for the savings metric vs average savings
     :param vibrant_weight: weight for the vibrance metric vs savings metric
     :return: posterized image
     """
-    target = new_target_image(image_path)
+    target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )

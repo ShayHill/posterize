@@ -35,7 +35,7 @@ _MAX_DIM = 500
 
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
 _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
-_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512)"]
+_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512e"]
 _Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
 _Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
 
@@ -177,7 +177,7 @@ def _get_cache_paths(source: Path) -> dict[str, Path]:
     """
     prefix = f"{_CACHE_PREFIX}_{source.stem}"
     attribs = ("palette", "indices", "pmatrix")
-    return {a: CACHE_DIR.with_name(f"{prefix}_{a}.npy") for a in attribs}
+    return {a: CACHE_DIR / f"{prefix}_{a}.npy" for a in attribs}
 
 
 @staticmethod
@@ -234,7 +234,7 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
     #TODO: remove ignore_cache = True when the cache is stable
-    ignore_cache = True
+    # ignore_cache = True
     if ignore_cache:
         clear_quantized_image_cache(source)
     with suppress(FileNotFoundError):

@@ -4,25 +4,25 @@
 :created: 2024-10-13
 """
 
+import os
 import subprocess
 from pathlib import Path
+from typing import Annotated, Any, Iterable, TypeAlias, cast
 
-from typing import Annotated, TypeAlias, Any
-import os
-
-from basic_colormath import float_tuple_to_8bit_int_tuple
 import numpy as np
+from basic_colormath import float_tuple_to_8bit_int_tuple
 from lxml import etree
 from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 from numpy import typing as npt
 from PIL import Image
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
-from posterize.paths import CACHE_DIR
 
 from posterize import paths
+from posterize.main import ImageApproximation
+from posterize.paths import CACHE_DIR
 
-_PixelVector: TypeAlias = Annotated[npt.NDArray[np.floating[Any]], "(r,3)"]
+_PixelVector: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r,3)"]
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(r,c)"]
 _IndexMatrices: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(n,r,c)"]
 
@@ -38,7 +38,7 @@ def _write_svg_from_mono_bmp(path_to_mono_bmp: str | os.PathLike[str]) -> Path:
     Images passed in this library will be not only grayscale, but monochrome. So, a
     blacklevel of 0.5 can be hardcoded.
     """
-    svg_path = (paths.CACHE / Path(path_to_mono_bmp).name).with_suffix(".svg")
+    svg_path = (CACHE_DIR / Path(path_to_mono_bmp).name).with_suffix(".svg")
     # fmt: off
     command = [
         str(paths.POTRACE),
@@ -64,7 +64,8 @@ def _get_layer_color_index(layer: _IndexMatrix) -> int:
 
     Just a bunch of sanity checks.
     """
-    layer_values = sorted(np.unique(layer))
+    unique = cast(Iterable[int], np.unique(layer))
+    layer_values = sorted(unique)
 
     match layer_values:
         case [color_index]:
@@ -142,28 +143,75 @@ def _new_foreground_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeEl
     elements copied directly from Potrace output then colored with a color from the
     colormap.
     """
-    mono_bmp = _write_mono_bmp(layer)
     elem_col = _get_layer_color_index(layer)
-    mono_svg = _write_svg_from_mono_bmp(mono_bmp)
-    elem = _get_svg_path_from_potrace_output(mono_svg, colormap[elem_col])
-    os.unlink(mono_bmp)
-    os.unlink(mono_svg)
+    mono_bmp = _write_mono_bmp(layer)
+    try:
+        mono_svg = _write_svg_from_mono_bmp(mono_bmp)
+    except Exception as e:
+        os.unlink(mono_bmp)
+        msg = "Potrace failed to convert the monochrome bitmap to svg."
+        raise RuntimeError(msg) from e
+    try:
+        elem = _get_svg_path_from_potrace_output(mono_svg, colormap[elem_col])
+    finally:
+        os.unlink(mono_bmp)
+        os.unlink(mono_svg)
     return elem
 
 
-def draw_posterized_image(
-    colormap: _PixelVector, layers: _IndexMatrices, filename_stem: str
+def _draw_posterized_image(
+    filename: str | os.PathLike[str], colormap: _PixelVector, layers: _IndexMatrices
 ):
     """Draw a posterized image.
 
+    :param filename: the filename stem for the output svg
     :param colormap: (r, 3) array of colors
     :param layers: list of (r, c) arrays where -1 is transparent and opaque pixels are
-        all filled with the same index colormap.
-    :param filename_stem: the filename stem for the output svg
+        all filled with the same index colormap. These are not the same layers as
+        ImageApproximation.layers. These are expanded to the size of the quantized
+        image.
+
+    You'll most likely want to call this function through `draw_approximation()`.
     """
     root = new_svg_root(x_=0, y_=0, width_=layers.shape[2], height_=layers.shape[1])
     root.append(_new_background_elem(colormap, layers[0]))
     for layer in layers[1:]:
+        layer = cast(_IndexMatrix, layer)
         root.append(_new_foreground_elem(colormap, layer))
-    svg_path = (paths.WORKING / filename_stem).with_suffix(".svg")
-    _ = write_svg(svg_path, root)
+    _ = write_svg(Path(filename), root)
+
+
+def _expand_layers(
+    quantized_image: Annotated[npt.NDArray[np.intp], "(r, c)"],
+    d1_layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
+) -> Annotated[npt.NDArray[np.intp], "(n, r, c)"]:
+    """Expand layers to the size of the quantized image.
+
+    :param quantized_image: (r, c) array with palette indices
+    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
+        palette index in [0, 511].
+    :return: (n, r, c) array of layers, each layer with the same shape as the
+        quantized image.
+
+    Convert the (usually (512,)) layers of an ImageApproximation to the (n, r, c)
+    layers required by draw_posterized_image.
+    """
+    d1_layers_ = cast(Iterable[npt.NDArray[np.intp]], d1_layers)
+    return np.array([x[quantized_image] for x in d1_layers_])
+
+
+def draw_approximation(
+    filename: str | os.PathLike[str],
+    state: ImageApproximation,
+    num_cols: int | None = None,
+) -> None:
+    """Draw an image approximation to an SVG file.
+
+    :param filename: path to the output SVG file
+    :param state: an ImageApproximation object
+    :param num_cols: optionally create the SVG with only the first `num_cols` colors.
+    :param stem: optionally add a filename infix.
+
+    """
+    big_layers = _expand_layers(state.target.indices, state.layers)
+    _draw_posterized_image(filename, state.target.palette, big_layers[:num_cols])

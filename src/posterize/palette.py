@@ -6,23 +6,19 @@
 
 import itertools as it
 from pathlib import Path
+from typing import Annotated, Iterable, Iterator, TypeAlias
 
+import numpy as np
+from basic_colormath import get_delta_e
 from cluster_colors import SuperclusterBase
+from numpy import typing as npt
 from palette_image.color_block_ops import sliver_color_blocks
 from palette_image.svg_display import write_palette
-from typing import Annotated, TypeAlias
-from numpy import typing as npt
-import numpy as np
 
 from posterize import paths
-from posterize import (
-    draw_approximation,
-    posterize,
-)
-
-from posterize.main import stemize
-
-from basic_colormath import get_delta_e
+from posterize.image_processing import draw_approximation
+from posterize.main import posterize
+from posterize.paths import WORKING
 
 _RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
 
@@ -36,6 +32,29 @@ centers = {
     "J Sultan Ali - Toga": (0.5, 0.25),
 }
 
+def _percentage_infix(float_: float) -> str:
+    """Get a string to use in the filename for a percentage."""
+    return f"{int(float_*100):02}"
+
+
+def stemize(*args: Path | float | int | str | None) -> Iterator[str]:
+    """Convert args to strings and filter out empty strings."""
+    if not args:
+        return
+    arg, *tail = args
+    if arg is None:
+        pass
+    elif isinstance(arg, str):
+        yield arg
+    elif isinstance(arg, Path):
+        yield arg.stem
+    elif isinstance(arg, float):
+        assert 0 <= arg <= 1
+        yield _percentage_infix(arg)
+    else:
+        assert isinstance(arg, int)
+        yield f"{arg:03d}"
+    yield from stemize(*tail)
 
 def _delta_e_from_white(rgb: _RGB) -> float:
     """Calculate the delta E from white for a given RGB color."""
@@ -88,7 +107,9 @@ def posterize_to_n_colors(
             vibrant_weight=vibrant_weight,
         )
 
-    draw_approximation(image_path, state, reqd_no, stem)
+    
+    output_path = WORKING / f"{stem}.svg"
+    draw_approximation(output_path, state, reqd_no)
 
     dist = [1.0] * net_cols
 
@@ -131,7 +152,6 @@ if __name__ == "__main__":
                 )
         except Exception as e:
             raise e
-        break
 
     print("done")
 

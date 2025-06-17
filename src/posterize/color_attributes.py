@@ -60,7 +60,7 @@ def get_purity(color: _RGB) -> float:
     with a purity of 0 is pure gray (127, 127, 127). A color with a purity of one is
     a pure color, a shaded (mixed with black) or a tinted (mixed with white) color.
     """
-    _, _, _, white, _, _, _, black = _get_rgb_dist(color)
+    _, _, _, white, _, _, _, black = map(float, _get_rgb_dist(color))
     return 1 - (min(white, black) / 127)
 
 
@@ -82,4 +82,3 @@ def get_vibrance(rgb: _RGB, chroma_weight: float = 0.75) -> float:
     """
     chroma_weight = 0.75
     return get_chromacity(rgb) * chroma_weight + get_purity(rgb) * (1 - chroma_weight)
-
