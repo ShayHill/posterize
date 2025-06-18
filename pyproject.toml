@@ -20,11 +20,18 @@ dev = [
   "tox",
 ]
 
-# "types-pillow"
-
 [build-system]
 requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+poeterize = ["binaries/potrace"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
