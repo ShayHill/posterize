@@ -9,7 +9,3 @@ from tempfile import TemporaryFile
 
 with TemporaryFile() as f:
     CACHE_DIR = Path(f.name).parent / "cluster_colors_cache"
-
-_PROJECT = Path(__file__, "../../..").resolve()
-_BINARIES = _PROJECT / "binaries"
-POTRACE = _BINARIES / "potrace.exe"

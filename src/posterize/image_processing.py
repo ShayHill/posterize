@@ -4,6 +4,7 @@
 :created: 2024-10-13
 """
 
+import importlib.resources
 import os
 import subprocess
 from pathlib import Path
@@ -18,12 +19,15 @@ from PIL import Image
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 
-from posterize import paths
 from posterize.main import ImageApproximation
 from posterize.paths import CACHE_DIR
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+
+POTRACE_EXE = importlib.resources.files("posterize.bin") / "potrace.exe"
+
 
 _PixelVector: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r,3)"]
 _IndexMatrix: TypeAlias = Annotated[npt.NDArray[np.integer[Any]], "(r,c)"]
@@ -44,7 +48,7 @@ def _write_svg_from_mono_bmp(path_to_mono_bmp: str | os.PathLike[str]) -> Path:
     svg_path = (CACHE_DIR / Path(path_to_mono_bmp).name).with_suffix(".svg")
     # fmt: off
     command = [
-        str(paths.POTRACE),
+        str(POTRACE_EXE),
         str(path_to_mono_bmp),
         "-o", str(svg_path),  # output file
         "-k", str(0.5),  # black level
