@@ -33,8 +33,8 @@ def merge_layers(*layers: _IntA) -> _IntA:
     and others with -1 for transparency.
     """
     if len(layers) == 0:
-        return np.full((512,), -1, dtype=int)
-    merged = layers[0].copy()
+        return np.ones((512,), dtype=int) * -1
+    merged = layers[0] * 1
     for layer in layers[1:]:
         merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
     return merged

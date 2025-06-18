@@ -21,9 +21,7 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from pathlib import Path
-from typing import Annotated, Iterable, TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import numpy as np
 from numpy import typing as npt
@@ -32,9 +30,13 @@ from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.quantization import TargetImage, new_target_image
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from pathlib import Path
+
+
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
-_RGB: TypeAlias = Annotated[npt.NDArray[np.uint8], (3,)]
 
 # Default weight for sum savings vs. average savings. Average savings is, by default,
 # weighted highly. These values are used when selecting the best candidate for the
@@ -57,6 +59,7 @@ class ColorsExhaustedError(Exception):
     """Exception raised when a new layer is requested, but no colors are available."""
 
     def __init__(self, message: str = "No available colors.") -> None:
+        """Initialize the ColorsExhaustedError exception."""
         self.message = message
         super().__init__(self.message)
 
@@ -109,20 +112,21 @@ class ImageApproximation:
         savings_weight: float | None = None,
         vibrant_weight: float | None = None,
     ) -> None:
+        """Initialize the ImageApproximation state."""
         self.target = target_image
         if colors is None:
             self.colors = tuple(range(len(target_image.palette)))
         else:
             self.colors = tuple(colors)
         if layers is None:
-            self.layers = np.empty((0, len(target_image.palette)), dtype=int)
+            self.layers = np.empty((0, len(target_image.palette)), dtype=np.intp)
         else:
             self.layers = layers
         self.cached_states: dict[tuple[int, ...], float] = {}
         self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
         self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
-        palette = cast(Iterable[npt.NDArray[np.uint8]], self.target.palette)
+        palette = cast("Iterable[npt.NDArray[np.uint8]]", self.target.palette)
         vibrancies = np.array(list(map(get_vibrance, palette)))
         self.target.weights *= 1 - self.vibrant_weight
         vibrancies *= self.vibrant_weight
@@ -138,7 +142,8 @@ class ImageApproximation:
 
         :return: (n, r, c) array of masks for each layer
         """
-        image = merge_layers(*self.layers)
+        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
+        image = merge_layers(*layers)
         return np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
 
     def get_available_colors(self) -> list[int]:
@@ -146,7 +151,6 @@ class ImageApproximation:
         if len(self.layers) == 0:
             return list(self.colors)
         layer_colors = self.layer_colors
-        assert -1 not in layer_colors
         return [x for x in self.colors if x not in layer_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
@@ -189,7 +193,7 @@ class ImageApproximation:
         except ColorsExhaustedError:
             return
         if len(self.layers) >= 2:
-            layer_masks = cast(Iterable[_IntA], self.get_layer_masks())
+            layer_masks = cast("Iterable[_IntA]", self.get_layer_masks())
             self.layers.resize((0, self.layers.shape[1]), refcheck=False)
             for mask in layer_masks:
                 self._add_one_layer(mask=mask)
@@ -215,7 +219,7 @@ class ImageApproximation:
             return solid
 
         solid_cost_matrix = self.target.get_cost_matrix(solid)
-        layers = cast(Iterable[npt.NDArray[np.intp]], self.layers)
+        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
         state_cost_matrix = self.target.get_cost_matrix(*layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
@@ -234,7 +238,7 @@ class ImageApproximation:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        layers = cast(Iterable[npt.NDArray[np.intp]], self.layers)
+        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
         state = merge_layers(*layers)
         state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
@@ -259,7 +263,7 @@ class ImageApproximation:
 
         more_is_better = [
             s * self.savings_weight + a * (1 - self.savings_weight)
-            for s, a in zip(layer_savings, layer_averages)
+            for s, a in zip(layer_savings, layer_averages, strict=True)
         ]
 
         best_idx = np.argmax(np.array(more_is_better, dtype=np.float64))

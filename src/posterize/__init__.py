@@ -7,8 +7,4 @@
 from posterize.image_processing import draw_approximation
 from posterize.main import ImageApproximation, posterize
 
-__all__ = [
-    "ImageApproximation",
-    "draw_approximation",
-    "posterize",
-]
+__all__ = ["ImageApproximation", "draw_approximation", "posterize"]

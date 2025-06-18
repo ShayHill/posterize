@@ -28,7 +28,8 @@ def get_chromacity(color: _RGB) -> float:
     A color with a vibrace of 0 is a shade of gray, while a color with a vibrance of
     1 is a pure color with maximum saturation and lightness.
     """
-    return (max(color) - min(color)) / 255
+    r, g, b = map(float, color)
+    return (max((r, g, b)) - min((r, g, b))) / 255
 
 
 def _get_rgb_dist(rgb: _RGB) -> _RGBWCMYK:
@@ -37,7 +38,7 @@ def _get_rgb_dist(rgb: _RGB) -> _RGBWCMYK:
     :param rgba: 4-channel rgba color
     :return: 8-channel color distribution
     """
-    r, g, b = rgb
+    r, g, b = map(float, rgb)
     w: float = min(r, g, b)
     k: float = 255 - max(r, g, b)
     y: float = min(r, g) - w

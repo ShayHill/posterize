@@ -14,7 +14,7 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, Any, TypeAlias
+from typing import Annotated, Any, TypeAlias, TypeVar, cast
 
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
@@ -38,6 +38,19 @@ _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
 _Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512e"]
 _Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
 _Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
+
+
+_AnyArray = TypeVar("_AnyArray", bound=npt.NDArray[Any])
+
+
+def _np_reshape(array: _AnyArray, shape: tuple[int, ...]) -> _AnyArray:
+    """Reshape an array to a given shape, preserving the dtype.
+
+    Wrap np.reshape to eliminate the partially unknown pyright type error.
+    """
+    if array.shape == shape:
+        return array
+    return cast("_AnyArray", np.reshape(array, shape))
 
 
 def _min_max_normalize(
@@ -233,8 +246,6 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
     :param ignore_cache: if True, ignore any cached results
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
-    #TODO: remove ignore_cache = True when the cache is stable
-    # ignore_cache = True
     if ignore_cache:
         clear_quantized_image_cache(source)
     with suppress(FileNotFoundError):
@@ -242,16 +253,15 @@ def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage
 
     image = Image.open(source)
     if max(image.size) > _MAX_DIM:
-        image.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
-    print(f"Quantizing {image.size} image")
+        image.thumbnail((_MAX_DIM, _MAX_DIM), Image.Resampling.LANCZOS)
     image = image.convert("RGBA")
 
-    rgba_colors = np.array(image).reshape(-1, 4)
+    rgba_colors = _np_reshape(np.array(image), (-1, 4))
     rgb_colors = rgba_colors[:, :3]
+
     palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-    indices = _index_to_nearest_color(palette, rgb_colors).reshape(
-        image.height, image.width
-    )
+    indices = _index_to_nearest_color(palette, rgb_colors)
+    indices = _np_reshape(indices, (image.height, image.width))
     pmatrix = get_delta_e_matrix(palette)
 
     quantized_image = TargetImage(palette, indices, pmatrix)

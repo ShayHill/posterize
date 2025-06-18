@@ -6,7 +6,7 @@ exclude: "tests"
 repos:
 
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.6.0
+  rev: v5.0.0
   hooks:
     - id: check-added-large-files
     - id: check-ast
@@ -60,20 +60,20 @@ repos:
 #     # files: ^(src/|tests/)
 
 - repo: https://github.com/PyCQA/isort
-  rev: 5.13.2
+  rev: 6.0.1
   hooks:
   - id: isort
     args: ["--profile", "black", "--filter-files", "--combine-as", "honor--noqa"]
 
 - repo: https://github.com/psf/black
-  rev: 24.8.0
+  rev: 25.1.0
   hooks:
   - id: black
     language_version: python3.10
     args: ["--skip-magic-trailing-comma"]
 
 - repo: https://github.com/asottile/pyupgrade
-  rev: v3.17.0
+  rev: v3.20.0
   hooks:
   - args:
     - --py310-plus
@@ -114,27 +114,26 @@ repos:
   # D203 1 blank line required before class docstring (incompatible with D211)
   # D213 multi line summary second line (incompatible with D212):
   # ISC003 Explicitly concatenated string should be implicitly concatenated
-  # ANN101 Missing type annotation for self in method
   # I001: Import block is un-sorted or un-formatted (disagrees with isort)
   #
   # ERA001: Found commented out code
   # PGH003: Use specific rule codes instead of generic ones
   # S603: subprocess call - check for execution of untrusted input
-  # S320: Using lxml to parse untrusted data
   # PLR0913: too many arguments for function
   # PYI034: __enter__ methods usually return 'self'
-  rev: 'v0.6.5'
+  # PLR2004: magic value used in expression
+  rev: 'v0.12.0'
   hooks:
     - id: ruff
       exclude: "tests"
       args:
       - --target-version=py310
       - --select=ALL
-      - --ignore=COM812,D203,D213,ISC003,ANN101,ERA001,PGH003,S603,S320,PLR0913,PYI034,I001
+      - --ignore=COM812,D203,D213,ISC003,ERA001,PGH003,S603,PLR0913,PYI034,I001,PLR2004
       # - --fix
 
 # reads pyproject.toml for additional config
 - repo: https://github.com/RobertCraigie/pyright-python
-  rev: v1.1.380
+  rev: v1.1.402
   hooks:
     - id: pyright
