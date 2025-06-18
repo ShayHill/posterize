@@ -10,7 +10,6 @@ dependencies = [
   "cluster-colors>=0.13",
   "numpy",
   "svg-ultralight",
-  "palette_image @ git+ssh://git@github.com/ShayHill/palette_image"
 ]
 
 [project.optional-dependencies]
