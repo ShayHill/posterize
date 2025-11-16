@@ -193,7 +193,6 @@ def _get_cache_paths(source: Path) -> dict[str, Path]:
     return {a: CACHE_DIR / f"{prefix}_{a}.npy" for a in attribs}
 
 
-@staticmethod
 def clear_quantized_image_cache(source: Path) -> None:
     """Clear the cache for one quantized image.
 
