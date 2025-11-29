@@ -9,6 +9,7 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+  "basic-colormath>=1.1.1",
   "cluster-colors>=0.13",
   "numpy",
   "svg-ultralight",
