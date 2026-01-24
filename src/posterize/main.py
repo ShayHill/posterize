@@ -21,27 +21,20 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
-import svg_ultralight as su
 from numpy import typing as npt
 from PIL import Image
-from svg_ultralight.strings import svg_color_tuple
 
 from posterize.color_attributes import get_vibrance
-from posterize.image_processing import layer_to_svgd
 from posterize.layers import apply_mask, merge_layers
+from posterize.posterization import Posterization
 from posterize.quantization import TargetImage, new_target_image
 
 if TYPE_CHECKING:
-    import os
-    from collections.abc import Iterable, Iterator
-
-    from lxml.etree import (
-        _Element as EtreeElement,  # pyright: ignore[reportPrivateUsage]
-    )
+    from collections.abc import Iterable
+    from pathlib import Path
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
@@ -130,15 +123,17 @@ class ImageApproximation:
             self.layers = np.empty((0, len(target_image.palette)), dtype=np.intp)
         else:
             self.layers = layers
-        self.cached_states: dict[tuple[int, ...], float] = {}
         self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
         self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
-        palette = cast("Iterable[npt.NDArray[np.uint8]]", self.target.palette)
-        vibrancies = np.array(list(map(get_vibrance, palette)))
-        self.target.weights *= 1 - self.vibrant_weight
-        vibrancies *= self.vibrant_weight
-        self.target.weights += vibrancies
+        palette = cast(
+            "Iterable[npt.NDArray[np.uint8]]", self.target.palette
+        )
+        vibrancies = np.array([get_vibrance(c) for c in palette])
+        self.target.weights = (
+            self.target.weights * (1 - self.vibrant_weight)
+            + vibrancies * self.vibrant_weight
+        )
 
     @property
     def layer_colors(self) -> list[int]:
@@ -157,8 +152,8 @@ class ImageApproximation:
         """Get available colors in the image."""
         if len(self.layers) == 0:
             return list(self.colors)
-        layer_colors = self.layer_colors
-        return [x for x in self.colors if x not in layer_colors]
+        used_colors = set(self.layer_colors)
+        return [x for x in self.colors if x not in used_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
         """Add one layer to the state."""
@@ -200,7 +195,7 @@ class ImageApproximation:
         except ColorsExhaustedError:
             return
         if len(self.layers) >= 2:
-            layer_masks = cast("Iterable[_IntA]", self.get_layer_masks())
+            layer_masks = self.get_layer_masks()
             self.layers.resize((0, self.layers.shape[1]), refcheck=False)
             for mask in layer_masks:
                 self._add_one_layer(mask=mask)
@@ -232,8 +227,7 @@ class ImageApproximation:
 
         solid_cost_matrix = self.target.get_cost_matrix(solid)
         if state_cost_matrix is None:
-            layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
-            state_cost_matrix = self.target.get_cost_matrix(*layers)
+            state_cost_matrix = self.target.get_cost_matrix(*self.layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
     def _sum_masked_weight(self, layer: _IntA, mask: None | _IntA) -> np.float64:
@@ -251,8 +245,7 @@ class ImageApproximation:
         :param state_layers: the current state or a presumed state
         :return: the candidate layer with the lowest cost
         """
-        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
-        state = merge_layers(*layers)
+        state = merge_layers(*self.layers)
         state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
 
@@ -261,7 +254,7 @@ class ImageApproximation:
 
         state_cost_matrix = None
         if len(self.layers) > 0:
-            state_cost_matrix = self.target.get_cost_matrix(*layers)
+            state_cost_matrix = self.target.get_cost_matrix(*self.layers)
 
         candidates = [
             self._new_candidate_layer(x, state_cost_matrix) for x in available_colors
@@ -287,143 +280,6 @@ class ImageApproximation:
 
         best_idx = np.argmax(np.array(more_is_better, dtype=np.float64))
         return candidates[best_idx]
-
-
-def _expand_layers(
-    quantized_image: Annotated[npt.NDArray[np.intp], "(r, c)"],
-    d1_layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
-) -> Annotated[npt.NDArray[np.intp], "(n, r, c)"]:
-    """Expand layers to the size of the quantized image.
-
-    :param quantized_image: (r, c) array with palette indices
-    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
-        palette index in [0, 511].
-    :return: (n, r, c) array of layers, each layer with the same shape as the
-        quantized image.
-
-    Convert the (usually (512,)) layers of an ImageApproximation to the (n, r, c)
-    layers required by draw_posterized_image.
-    """
-    d1_layers_ = cast("Iterable[npt.NDArray[np.intp]]", d1_layers)
-    return np.array([x[quantized_image] for x in d1_layers_])
-
-
-class Posterization:
-    """Result of posterizing an image.
-
-    :param indices: (r, c) array with palette indices from the quantized image
-    :param palette: (512, 3) array of color vectors
-    :param layers: (n, 512) array of n layers, each containing a value (color index)
-        and -1 for transparent
-    :param expanded_layers: (n, r, c) array of layers expanded to the size of the
-        quantized image
-    """
-
-    def __init__(
-        self,
-        indices: Annotated[npt.NDArray[np.intp], "(r, c)"],
-        palette: Annotated[npt.NDArray[np.uint8], "(512, 3)"],
-        layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
-    ) -> None:
-        """Initialize the Posterization.
-
-        :param indices: (r, c) array with palette indices from the quantized image
-        :param palette: (512, 3) array of color vectors
-        :param layers: (n, 512) array of n layers, each containing a value (color index)
-            and -1 for transparent
-        """
-        self.indices = indices
-        self.palette = palette
-        self._expanded_layers = _expand_layers(indices, layers)
-        self.pixels = merge_layers(*self._expanded_layers)
-        self.bbox = su.BoundingBox(0, 0, self.pixels.shape[1], self.pixels.shape[0])
-        _ = tuple(self.svgds)
-
-    @property
-    def layers(self) -> list[_IntA]:
-        """Get the expanded layers as a list.
-
-        :return: list of expanded layer arrays
-        """
-        layers_list = cast("Iterable[_IntA]", self._expanded_layers)
-        return list(layers_list)
-
-    @property
-    def colors(self) -> list[tuple[int, int, int]]:
-        """Get the RGB color tuple for each layer.
-
-        :return: list of RGB tuples (int, int, int) for each layer
-        """
-        layer_color_indices = [int(np.max(x)) for x in self._expanded_layers]
-        return [
-            (r, g, b)
-            for r, g, b in (map(int, self.palette[x]) for x in layer_color_indices)
-        ]
-
-    @property
-    def svgds(self) -> list[str]:
-        """Get an SVG data string for each layer.
-
-        :return: list of SVG data strings for each layer
-        """
-        return [layer_to_svgd(x) for x in self._expanded_layers]
-
-    @property
-    def elements(self) -> Iterator[EtreeElement]:
-        """Get SVG path elements for each layer.
-
-        :return: iterator of SVG path elements
-        """
-        for color, svgd in zip(self.colors, self.svgds, strict=True):
-            if not svgd:
-                continue
-            yield su.new_element("path", d=svgd, fill=svg_color_tuple(color))
-
-    @property
-    def elem(self) -> EtreeElement:
-        """Get a group element of all paths transformed to left-handed coordinates.
-
-        :return: group element with all paths
-        """
-        height = self._expanded_layers[0].shape[0]
-        tmat = f"matrix(1 0 0 -1 0 {height})"
-        group = su.new_element("g", transform=tmat)
-        group.extend(self.elements)
-        return group
-
-    @property
-    def blem(self) -> su.BoundElement:
-        """Get a bound element from the group element.
-
-        :return: bound element
-        """
-        return su.BoundElement(self.elem, self.bbox)
-
-    @property
-    def root(self) -> EtreeElement:
-        """Get the SVG root element.
-
-        :return: SVG root element
-        """
-        return su.new_svg_root_around_bounds(self.blem)
-
-    def write_svg(
-        self, path: str | os.PathLike[str], num_cols: int | None = None
-    ) -> Path:
-        """Write the posterization to an SVG file.
-
-        :param path: path to the output SVG file
-        :param num_cols: optionally create the SVG with only the first `num_cols` colors
-        :return: path to the output SVG file
-        """
-        if num_cols is not None:
-            elem = su.new_element("g", transform=self.elem.attrib.get("transform", ""))
-            for child in list(self.elem)[:num_cols]:
-                elem.append(child)
-            blem = su.BoundElement(elem, self.bbox)
-            root = su.new_svg_root_around_bounds(blem)
-            return su.write_svg(Path(path), root)
-        return su.write_svg(Path(path), self.root)
 
 
 def posterize(
