@@ -5,18 +5,12 @@
 """
 
 from pathlib import Path
-import numpy as np
 
-import itertools as it
-from basic_colormath import (
-    get_delta_e_matrix,
-    rgb_to_hex,
-    mix_hex,
-    get_delta_e_matrix_hex,
-)
+import numpy as np
+import svg_ultralight as su
+from basic_colormath import get_delta_e_matrix_hex, rgb_to_hex
 
 from posterize import posterize
-import svg_ultralight as su
 
 INKSCAPE = str(Path(r"C:\Program Files\Inkscape\bin\inkscape"))
 
@@ -78,24 +72,3 @@ start_time = time.time()
 dennis_ritchie(RESOURCES / "dennis_ritchie.png", "dennis_ritchie.svg")
 end_time = time.time()
 print(f"Time taken: {end_time - start_time} seconds")
-# palette = ["#c00000", "#1155cc", "#ffc740", "#000000", "#ffffff", "#0e7653"]
-
-# # for t in np.linspace(0.5, 0.75, 3):
-# for t in (0.75,):
-#     for i in range(2):
-#         palette.append(mix_hex(palette[i], "#ffffff", ratio=t))
-#     for i in range(2):
-#         palette.append(mix_hex(palette[i], "#000000", ratio=t))
-# palette.append(mix_hex(palette[2], "#ffffff", ratio=0.5))
-
-# for i, j in it.combinations(palette[:3], 2):
-#     palette.append(mix_hex(i, j, ratio=0.5))
-#     # palette.append(mix_hex(i, j, ratio=0.25))
-#     # palette.append(mix_hex(i, j, ratio=0.75))
-
-#     # palette.append(mix_hex(palette[2], "#ffffff", ratio=0.75))
-
-# swap_palette(RESOURCES / "chaucer.webp", OUT, palette)
-
-# blem = su.parse_bound_element(OUT)
-# # breakpoint()

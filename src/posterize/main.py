@@ -20,19 +20,20 @@ would completely cover the pink layer anyway.
 """
 
 from __future__ import annotations
-import os
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import numpy as np
+import svg_ultralight as su
 from numpy import typing as npt
+from svg_ultralight.strings import svg_color_tuple
 
 from posterize.color_attributes import get_vibrance
+from posterize.image_processing import layer_to_svgd
 from posterize.layers import apply_mask, merge_layers
 from posterize.quantization import TargetImage, new_target_image
-import svg_ultralight as su
-from svg_ultralight.strings import svg_color_tuple
-from pathlib import Path
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -151,8 +152,7 @@ class ImageApproximation:
 
         :return: (n, r, c) array of masks for each layer
         """
-        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
-        image = merge_layers(*layers)
+        image = merge_layers(*self.layers)
         return np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
 
     def get_available_colors(self) -> list[int]:
@@ -165,7 +165,7 @@ class ImageApproximation:
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
-        self.layers = np.append(self.layers, [new_layer], axis=0)
+        self.layers = np.concatenate([self.layers, [new_layer]])
 
     def fill_layers(self, num_layers: int) -> None:
         """Add layers until there are num_layers.
@@ -368,8 +368,6 @@ class Posterization:
 
         :return: list of SVG data strings for each layer
         """
-        from posterize.image_processing import layer_to_svgd
-
         return [layer_to_svgd(x) for x in self._expanded_layers]
 
     @property
