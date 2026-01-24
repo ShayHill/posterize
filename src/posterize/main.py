@@ -21,13 +21,13 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import numpy as np
 import svg_ultralight as su
 from numpy import typing as npt
+from PIL import Image
 from svg_ultralight.strings import svg_color_tuple
 
 from posterize.color_attributes import get_vibrance
@@ -36,14 +36,12 @@ from posterize.layers import apply_mask, merge_layers
 from posterize.quantization import TargetImage, new_target_image
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Iterable, Iterator
-    from pathlib import Path
 
-    import svg_ultralight as su
     from lxml.etree import (
         _Element as EtreeElement,  # pyright: ignore[reportPrivateUsage]
     )
-    from svg_ultralight.strings import svg_color_tuple
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
@@ -451,8 +449,6 @@ def posterize(
     :return: posterized image result
     """
     if resolution is not None:
-        from PIL import Image
-
         image = Image.open(image_path)
         if max(image.size) > resolution:
             image.thumbnail((resolution, resolution), Image.Resampling.LANCZOS)

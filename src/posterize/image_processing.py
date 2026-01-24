@@ -6,7 +6,6 @@
 
 import importlib.resources
 import os
-from svg_path_data import format_svgd_shortest
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
@@ -17,6 +16,7 @@ from lxml import etree
 from lxml.etree import _Element as EtreeElement  # pyright: ignore[reportPrivateUsage]
 from numpy import typing as npt
 from PIL import Image
+from svg_path_data import format_svgd_shortest
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 
@@ -145,87 +145,3 @@ def layer_to_svgd(layer: _IndexMatrix) -> str:
         mono_bmp.unlink()
         if svg_path is not None:
             svg_path.unlink()
-
-
-def _get_svg_path_from_potrace_output(
-    path_to_potrace_output: str | os.PathLike[str],
-    fill_color: tuple[float, float, float],
-) -> EtreeElement:
-    """Get an svg `g` element from the svg output of potrace.
-
-    :param path_to_mono_bmp: path to the monochrome image.
-    :return: a `g` element from the svg
-
-    This has to write the image to disk then read it, then extract the `g` element.
-    """
-    fill_rgb = float_tuple_to_8bit_int_tuple(fill_color)
-    elem = etree.parse(str(path_to_potrace_output)).getroot()[1]
-    _ = update_element(elem, fill=svg_color_tuple(fill_rgb))
-    return elem
-
-
-def _new_background_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeElement:
-    """Create a background element.
-
-    :param colormap: (r, 3) array of colors
-    :param layer: (r, c) array where -1 is transparent and opaque pixels are all
-        filled with the same index colormap.
-    :return: a `rect` element
-
-    The background is the first layer, and it's just a rectangle filled with the color
-    of the first layer.
-    """
-    bg_col = colormap[_get_layer_color_index(layer)]
-    height, width = layer.shape
-    return new_element(
-        "rect", x=0, y=0, width=width, height=height, fill=svg_color_tuple(bg_col)
-    )
-
-
-def _new_foreground_elem(colormap: _PixelVector, layer: _IndexMatrix) -> EtreeElement:
-    """Create a foreground element.
-
-    :param colormap: (r, 3) array of colors
-    :param layer: (r, c) array where -1 is transparent and opaque pixels are all
-        filled with the same index colormap.
-    :return: a `g` element describing a path filled with the color indexed in layer
-
-    A foreground element is any element above the background. These are `<g>`
-    elements copied directly from Potrace output then colored with a color from the
-    colormap.
-    """
-    elem_col = _get_layer_color_index(layer)
-    mono_bmp = _write_mono_bmp(layer)
-    try:
-        mono_svg = _write_svg_from_mono_bmp(mono_bmp)
-    except Exception as e:
-        mono_bmp.unlink()
-        msg = "Potrace failed to convert the monochrome bitmap to svg."
-        raise RuntimeError(msg) from e
-    try:
-        elem = _get_svg_path_from_potrace_output(mono_svg, colormap[elem_col])
-    finally:
-        mono_bmp.unlink()
-        mono_svg.unlink()
-    return elem
-
-
-def _draw_posterized_image(
-    filename: str | os.PathLike[str], colormap: _PixelVector, layers: _IndexMatrices
-) -> Path:
-    """Draw a posterized image.
-
-    :param filename: the filename stem for the output svg
-    :param colormap: (r, 3) array of colors
-    :param layers: list of (r, c) arrays where -1 is transparent and opaque pixels are
-        all filled with the same index colormap. These are not the same layers as
-        ImageApproximation.layers. These are expanded to the size of the quantized
-        image.
-
-    """
-    root = new_svg_root(x_=0, y_=0, width_=layers.shape[2], height_=layers.shape[1])
-    root.append(_new_background_elem(colormap, layers[0]))
-    for layer in layers[1:]:
-        layer = cast("_IndexMatrix", layer)
-        root.append(_new_foreground_elem(colormap, layer))
-    return Path(write_svg(Path(filename), root))
