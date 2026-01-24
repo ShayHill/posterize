@@ -1164,14 +1164,13 @@ wheels = [
 
 [[package]]
 name = "svg-path-data"
-version = "0.7.0"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "paragraphs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/67/11be847689caceec8ba84005bf8a2717f44573122636a4491d2c7eced274/svg_path_data-0.7.0.tar.gz", hash = "sha256:36ec4f4ec625002dc96de71d22cfbf8a097bfaa8d459a90eb98b37abc2b24513", size = 12906, upload-time = "2026-01-14T16:01:56.51Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/32/7de72bb6e2108635c685a67fd882d4adb7358493bddee4a95f133019e842/svg_path_data-0.7.0-py3-none-any.whl", hash = "sha256:f90d5bc94d30a921895c5eef47d1d02f09f330470ca61f3a48c5ce850461cb33", size = 15002, upload-time = "2026-01-14T16:01:55.373Z" },
+    { url = "https://files.pythonhosted.org/packages/16/3b/d9dbbe348f5cd4cc788ae8e38da65d3c2da08d6b1a4da28e17952b2b27fd/svg_path_data-0.7.1-py3-none-any.whl", hash = "sha256:aca3527b678d8eae19c7c1c0b2aedccc59a08a72078d7fdd937410125825655c", size = 15052, upload-time = "2026-01-24T23:31:55.902Z" },
 ]
 
 [[package]]
