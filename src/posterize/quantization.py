@@ -14,7 +14,7 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, Any, TypeAlias, TypeVar, cast
+from typing import Annotated, Any, TypeAlias, TypeVar, Union, cast
 
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
@@ -238,32 +238,48 @@ def _dump_quantized_image(quantized_image: TargetImage, source: Path) -> None:
             np.save(f, getattr(quantized_image, name))
 
 
-def new_target_image(source: Path, *, ignore_cache: bool = False) -> TargetImage:
+def new_target_image(
+    source: Union[Path, Image.Image], *, ignore_cache: bool = False
+) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
-    :param source: path to an image
-    :param ignore_cache: if True, ignore any cached results
+    :param source: path to an image or a PIL Image object
+    :param ignore_cache: if True, ignore any cached results (only used when source is a Path)
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
-    if ignore_cache:
-        clear_quantized_image_cache(source)
-    with suppress(FileNotFoundError):
-        return _load_quantized_image(source)
+    if isinstance(source, Path):
+        if ignore_cache:
+            clear_quantized_image_cache(source)
+        with suppress(FileNotFoundError):
+            return _load_quantized_image(source)
 
-    image = Image.open(source)
-    if max(image.size) > _MAX_DIM:
-        image.thumbnail((_MAX_DIM, _MAX_DIM), Image.Resampling.LANCZOS)
-    image = image.convert("RGBA")
+        image = Image.open(source)
+        if max(image.size) > _MAX_DIM:
+            image.thumbnail((_MAX_DIM, _MAX_DIM), Image.Resampling.LANCZOS)
+        image = image.convert("RGBA")
 
-    rgba_colors = _np_reshape(np.array(image), (-1, 4))
-    rgb_colors = rgba_colors[:, :3]
+        rgba_colors = _np_reshape(np.array(image), (-1, 4))
+        rgb_colors = rgba_colors[:, :3]
 
-    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-    indices = _index_to_nearest_color(palette, rgb_colors)
-    indices = _np_reshape(indices, (image.height, image.width))
-    pmatrix = get_delta_e_matrix(palette)
+        palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
+        indices = _index_to_nearest_color(palette, rgb_colors)
+        indices = _np_reshape(indices, (image.height, image.width))
+        pmatrix = get_delta_e_matrix(palette)
 
-    quantized_image = TargetImage(palette, indices, pmatrix)
-    _dump_quantized_image(quantized_image, source)
+        quantized_image = TargetImage(palette, indices, pmatrix)
+        _dump_quantized_image(quantized_image, source)
 
-    return quantized_image
+        return quantized_image
+    else:
+        # source is a PIL Image object
+        image = source.convert("RGBA")
+
+        rgba_colors = _np_reshape(np.array(image), (-1, 4))
+        rgb_colors = rgba_colors[:, :3]
+
+        palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
+        indices = _index_to_nearest_color(palette, rgb_colors)
+        indices = _np_reshape(indices, (image.height, image.width))
+        pmatrix = get_delta_e_matrix(palette)
+
+        return TargetImage(palette, indices, pmatrix)

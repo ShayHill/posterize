@@ -21,7 +21,7 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, TypeAlias, cast
 
 import numpy as np
 from numpy import typing as npt
@@ -270,6 +270,55 @@ class ImageApproximation:
         return candidates[best_idx]
 
 
+def _expand_layers(
+    quantized_image: Annotated[npt.NDArray[np.intp], "(r, c)"],
+    d1_layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
+) -> Annotated[npt.NDArray[np.intp], "(n, r, c)"]:
+    """Expand layers to the size of the quantized image.
+
+    :param quantized_image: (r, c) array with palette indices
+    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
+        palette index in [0, 511].
+    :return: (n, r, c) array of layers, each layer with the same shape as the
+        quantized image.
+
+    Convert the (usually (512,)) layers of an ImageApproximation to the (n, r, c)
+    layers required by draw_posterized_image.
+    """
+    d1_layers_ = cast("Iterable[npt.NDArray[np.intp]]", d1_layers)
+    return np.array([x[quantized_image] for x in d1_layers_])
+
+
+class Posterization:
+    """Result of posterizing an image.
+
+    :param indices: (r, c) array with palette indices from the quantized image
+    :param palette: (512, 3) array of color vectors
+    :param layers: (n, 512) array of n layers, each containing a value (color index)
+        and -1 for transparent
+    :param expanded_layers: (n, r, c) array of layers expanded to the size of the
+        quantized image
+    """
+
+    def __init__(
+        self,
+        indices: Annotated[npt.NDArray[np.intp], "(r, c)"],
+        palette: Annotated[npt.NDArray[np.uint8], "(512, 3)"],
+        layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
+    ) -> None:
+        """Initialize the Posterization.
+
+        :param indices: (r, c) array with palette indices from the quantized image
+        :param palette: (512, 3) array of color vectors
+        :param layers: (n, 512) array of n layers, each containing a value (color index)
+            and -1 for transparent
+        """
+        self.indices = indices
+        self.palette = palette
+        self.layers = layers
+        self.expanded_layers = _expand_layers(indices, layers)
+
+
 def posterize(
     image_path: Path,
     num_cols: int,
@@ -277,7 +326,8 @@ def posterize(
     savings_weight: None | float = None,
     vibrant_weight: None | float = None,
     ignore_quantized_image_cache: bool = False,
-) -> ImageApproximation:
+    resolution: None | int = None,
+) -> Posterization:
     """Posterize an image.
 
     :param image_path: path to the image
@@ -285,11 +335,25 @@ def posterize(
         colors are available, will silently return fewer layers / colors.
     :param savings_weight: weight for the savings metric vs average savings
     :param vibrant_weight: weight for the vibrance metric vs savings metric
-    :return: posterized image
+    :param ignore_quantized_image_cache: if True, ignore any cached quantized image
+        results
+    :param resolution: if not None, resize the image to have a maximum dimension
+        of this value before processing. The resized image is not written to disk.
+    :return: posterized image result
     """
-    target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)
+    if resolution is not None:
+        from PIL import Image
+
+        image = Image.open(image_path)
+        if max(image.size) > resolution:
+            image.thumbnail(
+                (resolution, resolution), Image.Resampling.LANCZOS
+            )
+        target = new_target_image(image, ignore_cache=ignore_quantized_image_cache)
+    else:
+        target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )
     state.two_pass_fill_layers(num_cols)
-    return state
+    return Posterization(target.indices, target.palette, state.layers)

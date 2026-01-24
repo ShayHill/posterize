@@ -19,7 +19,7 @@ from PIL import Image
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 
-from posterize.main import ImageApproximation
+from posterize.main import Posterization
 from posterize.paths import CACHE_DIR
 
 if TYPE_CHECKING:
@@ -187,36 +187,16 @@ def _draw_posterized_image(
     return Path(write_svg(Path(filename), root))
 
 
-def _expand_layers(
-    quantized_image: Annotated[npt.NDArray[np.intp], "(r, c)"],
-    d1_layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
-) -> Annotated[npt.NDArray[np.intp], "(n, r, c)"]:
-    """Expand layers to the size of the quantized image.
-
-    :param quantized_image: (r, c) array with palette indices
-    :param d1_layers: (n, 512) an array of layers. Layers may contain -1 or any
-        palette index in [0, 511].
-    :return: (n, r, c) array of layers, each layer with the same shape as the
-        quantized image.
-
-    Convert the (usually (512,)) layers of an ImageApproximation to the (n, r, c)
-    layers required by draw_posterized_image.
-    """
-    d1_layers_ = cast("Iterable[npt.NDArray[np.intp]]", d1_layers)
-    return np.array([x[quantized_image] for x in d1_layers_])
-
-
 def draw_approximation(
     filename: str | os.PathLike[str],
-    state: ImageApproximation,
+    result: Posterization,
     num_cols: int | None = None,
 ) -> Path:
     """Draw an image approximation to an SVG file.
 
     :param filename: path to the output SVG file
-    :param state: an ImageApproximation object
+    :param result: a Posterization object
     :param num_cols: optionally create the SVG with only the first `num_cols` colors.
     :return: path to the output SVG file
     """
-    big_layers = _expand_layers(state.target.indices, state.layers)
-    return _draw_posterized_image(filename, state.target.palette, big_layers[:num_cols])
+    return _draw_posterized_image(filename, result.palette, result.expanded_layers[:num_cols])
