@@ -68,14 +68,16 @@ def swap_palette(source_img: Path, svg: Path, palette: list[str]) -> str:
 
 
 def dennis_ritchie(source_img: Path, svg: Path) -> str:
-    image_approximation = posterize(
-        RESOURCES / "dennis_ritchie.png", 30, resolution=50
-    )
+    image_approximation = posterize(RESOURCES / "dennis_ritchie.png", 30, resolution=50)
     _ = draw_approximation(OUT, image_approximation)
 
 
-dennis_ritchie(RESOURCES / "dennis_ritchie.png", "dennis_ritchie.svg")
+import time
 
+start_time = time.time()
+dennis_ritchie(RESOURCES / "dennis_ritchie.png", "dennis_ritchie.svg")
+end_time = time.time()
+print(f"Time taken: {end_time - start_time} seconds")
 # palette = ["#c00000", "#1155cc", "#ffc740", "#000000", "#ffffff", "#0e7653"]
 
 # # for t in np.linspace(0.5, 0.75, 3):

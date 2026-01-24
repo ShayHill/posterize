@@ -21,7 +21,7 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import numpy as np
 from numpy import typing as npt
@@ -203,10 +203,15 @@ class ImageApproximation:
     #   Define and select new candidate layers
     # ===============================================================================
 
-    def _new_candidate_layer(self, palette_index: int) -> _IntA:
+    def _new_candidate_layer(
+        self,
+        palette_index: int,
+        state_cost_matrix: npt.NDArray[np.floating[Any]] | None = None,  # type: ignore[type-arg]
+    ) -> _IntA:
         """Create a new candidate layer.
 
         :param palette_index: the index of the color to use in the new layer
+        :param state_cost_matrix: pre-computed state cost matrix to avoid recalculation
         :return: a new candidate layer with the same shape as the quantized image.
             Pixels where palette_index would improve the approximation are set to
             palette_index. Pixels where palette_index would not improve the
@@ -219,8 +224,9 @@ class ImageApproximation:
             return solid
 
         solid_cost_matrix = self.target.get_cost_matrix(solid)
-        layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
-        state_cost_matrix = self.target.get_cost_matrix(*layers)
+        if state_cost_matrix is None:
+            layers = cast("Iterable[npt.NDArray[np.intp]]", self.layers)
+            state_cost_matrix = self.target.get_cost_matrix(*layers)
         return np.where(state_cost_matrix > solid_cost_matrix, palette_index, -1)
 
     def _sum_masked_weight(self, layer: _IntA, mask: None | _IntA) -> np.float64:
@@ -246,7 +252,12 @@ class ImageApproximation:
         if not available_colors:
             raise ColorsExhaustedError
 
-        candidates = [self._new_candidate_layer(x) for x in available_colors]
+        # Cache the state cost matrix - it's the same for all candidates
+        state_cost_matrix = None
+        if len(self.layers) > 0:
+            state_cost_matrix = self.target.get_cost_matrix(*layers)
+
+        candidates = [self._new_candidate_layer(x, state_cost_matrix) for x in available_colors]
         scores = [self.target.get_cost(state, x, mask=mask) for x in candidates]
 
         if state_cost == np.inf:
