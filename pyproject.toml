@@ -11,7 +11,9 @@ requires-python = ">=3.10"
 dependencies = [
   "basic-colormath>=1.1.1",
   "cluster-colors>=0.13",
+  "coverage>=7.13.1",
   "numpy",
+  "snakeviz>=2.2.2",
   "svg-ultralight",
 ]
 

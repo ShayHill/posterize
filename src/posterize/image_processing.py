@@ -6,6 +6,7 @@
 
 import importlib.resources
 import os
+from svg_path_data import format_svgd_shortest
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
@@ -19,7 +20,6 @@ from PIL import Image
 from svg_ultralight import new_element, new_svg_root, update_element, write_svg
 from svg_ultralight.strings import svg_color_tuple
 
-from posterize.main import Posterization
 from posterize.paths import CACHE_DIR
 
 if TYPE_CHECKING:
@@ -102,6 +102,51 @@ def _write_mono_bmp(layer: _IndexMatrix) -> Path:
     return output_path
 
 
+def write_mono_bmp(layer: _IndexMatrix) -> Path:
+    """Write a monochrome bitmap from an index matrix.
+
+    :param layer: (r, c) array where -1 is transparent and opaque pixels are all
+        filled with the same index colormap.
+    :return: path to the monochrome bitmap
+
+    This bmp will be the input argument for potrace. Black pixels will be inside the
+    output path element.
+    """
+    mono_pixels = np.ones([*layer.shape, 3], dtype=np.uint8) * 255
+    mono_pixels[np.where(layer != -1)] = (0, 0, 0)
+    mono_bmp = Image.fromarray(mono_pixels)
+    output_path = _TMP_BMP
+    mono_bmp.save(output_path)
+    return output_path
+
+
+def layer_to_svgd(layer: _IndexMatrix) -> str:
+    """Convert a layer to an SVG data string.
+
+    :param layer: (r, c) array where -1 is transparent and opaque pixels are all
+        filled with the same index colormap.
+    :return: SVG data string
+
+    If the layer has no -1 values (solid layer), returns a rectangle path covering
+    the entire layer. Otherwise, writes a monochrome bitmap from the layer, converts
+    it to SVG using potrace, and returns the SVG content as a string.
+    """
+    if np.all(layer != -1):
+        height, width = layer.shape
+        return format_svgd_shortest(f"M0 0 {width} 0 {width} {height} 0 {height}z")
+    mono_bmp = write_mono_bmp(layer)
+    svg_path: Path | None = None
+    try:
+        svg_path = _write_svg_from_mono_bmp(mono_bmp)
+        return format_svgd_shortest(
+            etree.parse(str(svg_path)).getroot()[1][0].attrib["d"]
+        )
+    finally:
+        mono_bmp.unlink()
+        if svg_path is not None:
+            svg_path.unlink()
+
+
 def _get_svg_path_from_potrace_output(
     path_to_potrace_output: str | os.PathLike[str],
     fill_color: tuple[float, float, float],
@@ -177,7 +222,6 @@ def _draw_posterized_image(
         ImageApproximation.layers. These are expanded to the size of the quantized
         image.
 
-    You'll most likely want to call this function through `draw_approximation()`.
     """
     root = new_svg_root(x_=0, y_=0, width_=layers.shape[2], height_=layers.shape[1])
     root.append(_new_background_elem(colormap, layers[0]))
@@ -185,18 +229,3 @@ def _draw_posterized_image(
         layer = cast("_IndexMatrix", layer)
         root.append(_new_foreground_elem(colormap, layer))
     return Path(write_svg(Path(filename), root))
-
-
-def draw_approximation(
-    filename: str | os.PathLike[str],
-    result: Posterization,
-    num_cols: int | None = None,
-) -> Path:
-    """Draw an image approximation to an SVG file.
-
-    :param filename: path to the output SVG file
-    :param result: a Posterization object
-    :param num_cols: optionally create the SVG with only the first `num_cols` colors.
-    :return: path to the output SVG file
-    """
-    return _draw_posterized_image(filename, result.palette, result.expanded_layers[:num_cols])

@@ -9,7 +9,6 @@
 import tempfile
 from pathlib import Path
 
-from posterize.image_processing import draw_approximation
 from posterize.main import posterize
 
 TEST_RESOURCES = Path(__file__).parent / "resources"
@@ -24,7 +23,7 @@ class TestImageGeneration:
             result_path = Path(f.name)
         expect_path = TEST_RESOURCES / "expect_draw_approximation.svg"
         try:
-            draw_approximation(result_path, posterized_image)
+            posterized_image.write_svg(result_path)
             with result_path.open("r") as result_file:
                 result = result_file.read()
             with expect_path.open("r") as expect_file:

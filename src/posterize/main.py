@@ -20,6 +20,7 @@ would completely cover the pink layer anyway.
 """
 
 from __future__ import annotations
+import os
 
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
@@ -29,11 +30,19 @@ from numpy import typing as npt
 from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.quantization import TargetImage, new_target_image
+import svg_ultralight as su
+from svg_ultralight.strings import svg_color_tuple
+from pathlib import Path
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
+    import svg_ultralight as su
+    from lxml.etree import (
+        _Element as EtreeElement,  # pyright: ignore[reportPrivateUsage]
+    )
+    from svg_ultralight.strings import svg_color_tuple
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
@@ -206,7 +215,7 @@ class ImageApproximation:
     def _new_candidate_layer(
         self,
         palette_index: int,
-        state_cost_matrix: npt.NDArray[np.floating[Any]] | None = None,  # type: ignore[type-arg]
+        state_cost_matrix: npt.NDArray[np.floating[Any]] | None = None,
     ) -> _IntA:
         """Create a new candidate layer.
 
@@ -252,12 +261,13 @@ class ImageApproximation:
         if not available_colors:
             raise ColorsExhaustedError
 
-        # Cache the state cost matrix - it's the same for all candidates
         state_cost_matrix = None
         if len(self.layers) > 0:
             state_cost_matrix = self.target.get_cost_matrix(*layers)
 
-        candidates = [self._new_candidate_layer(x, state_cost_matrix) for x in available_colors]
+        candidates = [
+            self._new_candidate_layer(x, state_cost_matrix) for x in available_colors
+        ]
         scores = [self.target.get_cost(state, x, mask=mask) for x in candidates]
 
         if state_cost == np.inf:
@@ -326,8 +336,98 @@ class Posterization:
         """
         self.indices = indices
         self.palette = palette
-        self.layers = layers
-        self.expanded_layers = _expand_layers(indices, layers)
+        self._expanded_layers = _expand_layers(indices, layers)
+        self.pixels = merge_layers(*self._expanded_layers)
+        self.bbox = su.BoundingBox(0, 0, self.pixels.shape[1], self.pixels.shape[0])
+        _ = tuple(self.svgds)
+
+    @property
+    def layers(self) -> list[_IntA]:
+        """Get the expanded layers as a list.
+
+        :return: list of expanded layer arrays
+        """
+        layers_list = cast("Iterable[_IntA]", self._expanded_layers)
+        return list(layers_list)
+
+    @property
+    def colors(self) -> list[tuple[int, int, int]]:
+        """Get the RGB color tuple for each layer.
+
+        :return: list of RGB tuples (int, int, int) for each layer
+        """
+        layer_color_indices = [int(np.max(x)) for x in self._expanded_layers]
+        return [
+            (r, g, b)
+            for r, g, b in (map(int, self.palette[x]) for x in layer_color_indices)
+        ]
+
+    @property
+    def svgds(self) -> list[str]:
+        """Get an SVG data string for each layer.
+
+        :return: list of SVG data strings for each layer
+        """
+        from posterize.image_processing import layer_to_svgd
+
+        return [layer_to_svgd(x) for x in self._expanded_layers]
+
+    @property
+    def elements(self) -> Iterator[EtreeElement]:
+        """Get SVG path elements for each layer.
+
+        :return: iterator of SVG path elements
+        """
+        for color, svgd in zip(self.colors, self.svgds, strict=True):
+            if not svgd:
+                continue
+            yield su.new_element("path", d=svgd, fill=svg_color_tuple(color))
+
+    @property
+    def elem(self) -> EtreeElement:
+        """Get a group element of all paths transformed to left-handed coordinates.
+
+        :return: group element with all paths
+        """
+        height = self._expanded_layers[0].shape[0]
+        tmat = f"matrix(1 0 0 -1 0 {height})"
+        group = su.new_element("g", transform=tmat)
+        group.extend(self.elements)
+        return group
+
+    @property
+    def blem(self) -> su.BoundElement:
+        """Get a bound element from the group element.
+
+        :return: bound element
+        """
+        return su.BoundElement(self.elem, self.bbox)
+
+    @property
+    def root(self) -> EtreeElement:
+        """Get the SVG root element.
+
+        :return: SVG root element
+        """
+        return su.new_svg_root_around_bounds(self.blem)
+
+    def write_svg(
+        self, path: str | os.PathLike[str], num_cols: int | None = None
+    ) -> Path:
+        """Write the posterization to an SVG file.
+
+        :param path: path to the output SVG file
+        :param num_cols: optionally create the SVG with only the first `num_cols` colors
+        :return: path to the output SVG file
+        """
+        if num_cols is not None:
+            elem = su.new_element("g", transform=self.elem.attrib.get("transform", ""))
+            for child in list(self.elem)[:num_cols]:
+                elem.append(child)
+            blem = su.BoundElement(elem, self.bbox)
+            root = su.new_svg_root_around_bounds(blem)
+            return su.write_svg(Path(path), root)
+        return su.write_svg(Path(path), self.root)
 
 
 def posterize(
@@ -357,9 +457,7 @@ def posterize(
 
         image = Image.open(image_path)
         if max(image.size) > resolution:
-            image.thumbnail(
-                (resolution, resolution), Image.Resampling.LANCZOS
-            )
+            image.thumbnail((resolution, resolution), Image.Resampling.LANCZOS)
         target = new_target_image(image, ignore_cache=ignore_quantized_image_cache)
     else:
         target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)

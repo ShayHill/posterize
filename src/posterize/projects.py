@@ -15,7 +15,7 @@ from basic_colormath import (
     get_delta_e_matrix_hex,
 )
 
-from posterize import posterize, draw_approximation
+from posterize import posterize
 import svg_ultralight as su
 
 INKSCAPE = str(Path(r"C:\Program Files\Inkscape\bin\inkscape"))
@@ -40,7 +40,7 @@ def _svg_rgb_to_hex(svg_rgb: str) -> str:
 
 def swap_palette(source_img: Path, svg: Path, palette: list[str]) -> str:
     image_approximation = posterize(RESOURCES / "chaucer.webp", len(palette))
-    _ = draw_approximation(OUT, image_approximation)
+    _ = image_approximation.write_svg(OUT)
     svg_blem = su.parse_bound_element(svg)
     input_cols: list[str] = []
     for sub in svg_blem.elem:
@@ -68,8 +68,8 @@ def swap_palette(source_img: Path, svg: Path, palette: list[str]) -> str:
 
 
 def dennis_ritchie(source_img: Path, svg: Path) -> str:
-    image_approximation = posterize(RESOURCES / "dennis_ritchie.png", 30, resolution=50)
-    _ = draw_approximation(OUT, image_approximation)
+    image_approximation = posterize(RESOURCES / "dennis_ritchie.png", 5)
+    _ = image_approximation.write_svg(OUT)
 
 
 import time
