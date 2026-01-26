@@ -75,6 +75,8 @@ class Posterization:
         :param layers: (n, 512) array of n layers, each containing a value (color index)
             and -1 for transparent
         """
+        self.indices = indices
+        self.palette = palette
         self._color_indices = tuple([next(x for x in y if x != -1) for y in layers])
         self._layers = _expand_layers(indices, layers)
         self._colors = [rgb_to_hex(palette[x]) for x in self._color_indices]
