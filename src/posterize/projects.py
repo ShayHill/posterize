@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from posterize import posterize
+from posterize.posterization import dump_posterization, load_posterization
 
 INKSCAPE = str(Path(r"C:\Program Files\Inkscape\bin\inkscape"))
 
@@ -24,7 +25,10 @@ def _dennis_ritchie(svg: str | os.PathLike[str]) -> Path:
 
 
 def _marbles(svg: str | os.PathLike[str]) -> Path:
-    posterization = posterize(RESOURCES / "marbles.jpg", 5)
+    posterization = posterize(RESOURCES / "marbles2.png", 5)
+    print(posterization.get_counts())
+    dump_posterization(posterization, "marbles.json")
+    posterization = load_posterization("marbles.json")
     print(posterization.get_counts())
     return posterization.write_svg(svg)
 

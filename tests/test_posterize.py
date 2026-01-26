@@ -13,6 +13,7 @@ import pytest
 from posterize.paths import CACHE_DIR
 
 from posterize.main import ImageApproximation, _set_max_val_to_one, posterize
+from posterize.posterization import Posterization
 from posterize.quantization import new_target_image, clear_all_quantized_image_caches, _CACHE_PREFIX
 
 TEST_RESOURCES = Path(__file__).parent / "resources"
@@ -29,7 +30,7 @@ IGNORE_QUANTIZED_IMAGE_CACHE = False
 
 
 @pytest.fixture(scope="module")
-def rgb_posterized() -> ImageApproximation:
+def rgb_posterized() -> Posterization:
     """Fixture for the full-color image."""
     return posterize(
         FULL_COLOR, 6, ignore_quantized_image_cache=IGNORE_QUANTIZED_IMAGE_CACHE
@@ -37,8 +38,8 @@ def rgb_posterized() -> ImageApproximation:
 
 
 @pytest.fixture(scope="module")
-def mono_posterized() -> ImageApproximation:
-    """Fixture for the full-color image."""
+def mono_posterized() -> Posterization:
+    """Fixture for the monochrome image."""
     return posterize(
         MONOCHROME, 6, ignore_quantized_image_cache=IGNORE_QUANTIZED_IMAGE_CACHE
     )
@@ -54,23 +55,25 @@ def test_clear_all_quantized_image_caches():
 class TestPosterize:
     """Test the posterize function."""
 
-    def test_rgb_colors(self, rgb_posterized: ImageApproximation):
+    def test_rgb_colors(self, rgb_posterized: Posterization):
         """Posterizing a full-color image results in 512 colors."""
-        assert rgb_posterized.colors == tuple(range(512))
+        assert len(rgb_posterized.palette) == 512
 
-    def test_rgb_layers(self, rgb_posterized: ImageApproximation):
+    def test_rgb_layers(self, rgb_posterized: Posterization):
         """Golden Master test layers for full-color image."""
         expect = np.load(FULL_COLOR_6_LAYERS)
-        np.testing.assert_array_equal(rgb_posterized.layers, expect)
+        actual = np.array(rgb_posterized.layers, dtype=np.intp)
+        np.testing.assert_array_equal(actual, expect)
 
-    def test_mono_colors(self, mono_posterized: ImageApproximation):
+    def test_mono_colors(self, mono_posterized: Posterization):
         """Posterizing a monochrome image results in <= 256 colors."""
-        assert len(mono_posterized.colors) <= 256
+        assert len(mono_posterized.palette) <= 256
 
-    def test_mono_layers(self, mono_posterized: ImageApproximation):
+    def test_mono_layers(self, mono_posterized: Posterization):
         """Golden Master test layers for monochrome image."""
         expect = np.load(MONOCHROME_6_LAYERS)
-        np.testing.assert_array_equal(mono_posterized.layers, expect)
+        actual = np.array(mono_posterized.layers, dtype=np.intp)
+        np.testing.assert_array_equal(actual, expect)
 
 
 class TestSetMaxValToOne:
@@ -107,17 +110,19 @@ class TestExhaustColors:
 class TestImageApproximation:
     """Test ImageApproximation code that isn't run by posterize."""
 
-    def test_pass_layers(self, rgb_posterized: ImageApproximation):
+    def test_pass_layers(self, rgb_posterized: Posterization):
         """Pass previously-defined layers to ImageApproximation.init."""
         prev_run = posterize(
             FULL_COLOR, 6, ignore_quantized_image_cache=IGNORE_QUANTIZED_IMAGE_CACHE
         )
-        image_approx = ImageApproximation(prev_run.target, layers=prev_run.layers)
+        target_image = new_target_image(FULL_COLOR)
+        layers_array = np.array(prev_run.layers, dtype=np.intp)
+        image_approx = ImageApproximation(target_image, layers=layers_array)
         expect = np.load(FULL_COLOR_6_LAYERS)
         np.testing.assert_array_equal(image_approx.layers, expect)
 
     def test_do_not_overfill_layers(
-        self, rgb_posterized: ImageApproximation
+        self, rgb_posterized: Posterization
     ):
         """Do not overfill layers when passing layers to ImageApproximation."""
         target_image = new_target_image(FULL_COLOR)

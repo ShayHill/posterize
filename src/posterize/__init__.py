@@ -5,12 +5,18 @@
 """
 
 from posterize.main import posterize
-from posterize.posterization import Posterization
+from posterize.posterization import (
+    Posterization,
+    dump_posterization,
+    load_posterization,
+)
 from posterize.quantization import TargetImage, new_target_image
 
 __all__ = [
     "Posterization",
     "TargetImage",
+    "dump_posterization",
+    "load_posterization",
     "new_target_image",
     "posterize",
 ]

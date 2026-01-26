@@ -16,8 +16,8 @@ TEST_RESOURCES = Path(__file__).parent / "resources"
 FULL_COLOR = TEST_RESOURCES / "full_color.webp"
 
 class TestImageGeneration:
-    def test_draw_approximation(self):
-        """Test that the draw_approximation function works correctly."""
+    def test_write_svg(self):
+        """Test that the write_svg method works correctly."""
         posterized_image = posterize(FULL_COLOR, 6)
         with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as f:
             result_path = Path(f.name)
@@ -31,7 +31,3 @@ class TestImageGeneration:
             assert result == expected
         finally:
             result_path.unlink(missing_ok=True)
-            
-
-
-

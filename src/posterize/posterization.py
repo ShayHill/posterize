@@ -10,6 +10,8 @@ elements, and writing SVG files.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, TypeAlias, cast
 
@@ -51,8 +53,9 @@ def _expand_layers(
     return np.array([x[quantized_image] for x in d1_layers_])
 
 
+@dataclasses.dataclass
 class Posterization:
-    """Result of posterizing an image.
+    """Result of posterizing an image. Serializable.
 
     :param indices: (r, c) array with palette indices from the quantized image
     :param palette: (512, 3) array of color vectors
@@ -62,11 +65,16 @@ class Posterization:
         quantized image
     """
 
+    # fields are lists for json serialization
+    indices: list[list[int]]
+    palette: list[list[int]]
+    layers: list[list[int]]
+
     def __init__(
         self,
-        indices: Annotated[npt.NDArray[np.intp], "(r, c)"],
-        palette: Annotated[npt.NDArray[np.uint8], "(512, 3)"],
-        layers: Annotated[npt.NDArray[np.intp], "(n, 512)"],
+        indices: Annotated[npt.NDArray[np.intp], "(r, c)"] | list[list[int]],
+        palette: Annotated[npt.NDArray[np.uint8], "(512, 3)"] | list[list[int]],
+        layers: Annotated[npt.NDArray[np.intp], "(n, 512)"] | list[list[int]],
     ) -> None:
         """Initialize the Posterization.
 
@@ -74,22 +82,30 @@ class Posterization:
         :param palette: (512, 3) array of color vectors
         :param layers: (n, 512) array of n layers, each containing a value (color index)
             and -1 for transparent
+
+        __init__ will only be passed numpy arrays in this library. The list types are to
+        restore a serialized Posterization object.
         """
-        self.indices = indices
-        self.palette = palette
+        indices = np.asarray(indices, dtype=np.intp)
+        palette = np.asarray(palette, dtype=np.uint8)
+        layers = np.asarray(layers, dtype=np.intp)
+        self.indices = indices.tolist()
+        self.palette = palette.tolist()
+        self.layers = layers.tolist()
+
         self._color_indices = tuple([next(x for x in y if x != -1) for y in layers])
-        self._layers = _expand_layers(indices, layers)
+        self._expanded_layers = _expand_layers(indices, layers)
         self._colors = [rgb_to_hex(palette[x]) for x in self._color_indices]
         self.bbox = su.BoundingBox(0, 0, indices.shape[1], indices.shape[0])
-        self._svgds = [layer_to_svgd(x) for x in self._layers]
+        self._svgds = [layer_to_svgd(x) for x in self._expanded_layers]
 
     def get_layers(self, num_cols: int | None = None) -> list[_IntA]:
         """Get the layers for the given number of colors."""
-        return list(self._layers[:num_cols])
+        return list(self._expanded_layers[:num_cols])
 
     def get_pixels(self, num_cols: int | None = None) -> _IntA:
         """Get the color index for each pixel."""
-        return merge_layers(*self._layers[:num_cols])
+        return merge_layers(*self._expanded_layers[:num_cols])
 
     def get_colors(self, num_cols: int | None = None) -> list[str]:
         """Get the color for each layer."""
@@ -141,3 +157,17 @@ class Posterization:
         """
         root = self.new_root(num_cols)
         return su.write_svg(Path(path), root)
+
+
+def dump_posterization(
+    posterization: Posterization, path: str | os.PathLike[str]
+) -> None:
+    """Dump a Posterization object to a JSON file."""
+    with Path(path).open("w") as f:
+        json.dump(dataclasses.asdict(posterization), f)
+
+
+def load_posterization(path: str | os.PathLike[str]) -> Posterization:
+    """Load a Posterization object from a JSON file."""
+    with Path(path).open("r") as f:
+        return Posterization(**json.load(f))
