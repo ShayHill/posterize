@@ -15,6 +15,7 @@ TEST_RESOURCES = Path(__file__).parent / "resources"
 
 FULL_COLOR = TEST_RESOURCES / "full_color.webp"
 
+
 class TestImageGeneration:
     def test_write_svg(self):
         """Test that the write_svg method works correctly."""
