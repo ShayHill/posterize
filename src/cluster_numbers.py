@@ -4,46 +4,51 @@
 :created: 2026-01-27
 """
 
-from collections.abc import Iterable
 import itertools as it
+from collections.abc import Iterable
+
 from basic_colormath import float_to_8bit_int
 
 
-def get_optimal_exemplars(
-    values: Iterable[int],
-    k: int,
-    weights: Iterable[float] | None = None,
-) -> list[float]:
-    """Return a list of k optimal cluster centers for 1D data.
-
-    Uses dynamic programming. Values assumed to be in (0, 255),
-    len(values) ≤ 255. Result is sorted by cluster position.
-
-    :param values: Iterable of integer values to cluster
-    :param k: Number of clusters to create
-    :param weights: Optional iterable of weights for each value
-    :return: list of floats (the exemplars / representatives)
-    """
-    if k < 1 or not values:
-        return []
-
+def _aggregate_and_sort(
+    values: Iterable[float],
+    weights: Iterable[float] | None,
+) -> tuple[list[float], list[float]]:
+    """Return unique values and their aggregated weights, sorted by value."""
+    weights = weights or [1.0]
     nos = list(values)
-    if weights is None:
-        weights = [1.0]
     wts = list(it.islice(it.cycle(weights), len(nos)))
-
-    # Aggregate duplicate values by summing their weights
-    value_to_weight: dict[int, float] = {}
+    value_to_weight: dict[float, float] = {}
     for val, weight in zip(nos, wts, strict=True):
         value_to_weight[val] = value_to_weight.get(val, 0.0) + weight
     sorted_pairs = sorted(value_to_weight.items(), key=lambda x: x[0])
-    nos = [pair[0] for pair in sorted_pairs]
-    wts = [pair[1] for pair in sorted_pairs]
+    nos = [n for n, _ in sorted_pairs]
+    wts = [w for _, w in sorted_pairs]
+    return (nos, wts)
 
+
+def cluster_floats(
+    values: Iterable[float],
+    k: int,
+    weights: Iterable[float] | None = None,
+) -> tuple[list[float], list[list[float]]]:
+    """Return optimal cluster centers and their members for 1D data.
+
+    :param values: Iterable of values to cluster
+    :param k: Number of clusters to create
+    :param weights: Optional iterable of weights for each value
+    :return: tuple of (exemplars, cluster_members) where exemplars is a list
+        of floats (the cluster centers) and cluster_members is a list of
+        lists, each containing the values in that cluster
+
+    Uses the Fisher-Jenks natural breaks (optimal 1d k-means) algorithm.
+    """
+    if k < 1 or not values:
+        return ([], [])
+    nos, wts = _aggregate_and_sort(values, weights)
     n = len(nos)
     k = min(k, n)
 
-    # Weighted prefix sums for O(1) range statistics
     prefix_sum = [0.0] * (n + 1)
     prefix_sqd = [0.0] * (n + 1)
     prefix_wts = [0.0] * (n + 1)
@@ -61,8 +66,7 @@ def get_optimal_exemplars(
         weighted_sq_sum = prefix_sqd[right + 1] - prefix_sqd[left]
         return weighted_sq_sum - weighted_sum * weighted_sum / total_weight
 
-    INF = 1e100
-    dp = [[INF] * (k + 1) for _ in range(n + 1)]
+    dp = [[float("inf")] * (k + 1) for _ in range(n + 1)]
     dp[0][0] = 0.0
     prev = [[-1] * (k + 1) for _ in range(n + 1)]
     for i in range(1, n + 1):
@@ -73,6 +77,7 @@ def get_optimal_exemplars(
                     dp[i][j] = cost
                     prev[i][j] = p
     exemplars: list[float] = []
+    cluster_members: list[list[float]] = []
     i = n
     j = k
     while j > 0:
@@ -82,10 +87,26 @@ def get_optimal_exemplars(
             weighted_sum = prefix_sum[i] - prefix_sum[p]
             mean = weighted_sum / total_weight
             exemplars.append(mean)
+            cluster_members.append(nos[p:i])
         i = p
         j -= 1
 
-    return [float_to_8bit_int(x) for x in exemplars]
+    return (exemplars, cluster_members)
+
+
+def cluster_uint8(
+    values: Iterable[int],
+    k: int,
+    weights: Iterable[float] | None = None,
+) -> tuple[list[int], list[list[int]]]:
+    """Return optimal cluster centers and their members for 8-bit integer values.
+
+    Assumes all values are in [0, 255].
+    """
+    exemplars, members = cluster_floats(values, k, weights)
+    exemplars_ = [float_to_8bit_int(x) for x in exemplars]
+    members_ = [[int(i) for i in m] for m in members]
+    return exemplars_, members_
 
 
 # ────────────────────────────────────────────────
@@ -96,14 +117,12 @@ if __name__ == "__main__":
     data = [1, 2, 3, 4, 5]
     wwww = [1, 1, 1, 2, 3]
 
-    exemplars = get_optimal_exemplars(data, 3, wwww)
-    print("Exemplars:", [x for x in exemplars])  # noqa: T201
-    # # → Exemplars: [1.4, 49.267, 221.475]
+    exemplars, members = cluster_floats(data, 3, wwww)
+    print("Exemplars:", exemplars)  # noqa: T201
+    print("Members:", members)  # noqa: T201
 
     data = [1, 2, 3, 4, 4, 5, 5, 5]
-    exemplars = get_optimal_exemplars(data, 3)
-    print("Exemplars:", [x for x in exemplars])  # noqa: T201
-
-    # exemplars4 = get_optimal_exemplars(data, 4)
-    # print("With 4 clusters:", [round(x, 3) for x in exemplars4])  # noqa: T201
-    # # → With 4 clusters: [1.4, 49.267, 210.55, 237.4]
+    data = [0] + [1] * 100 + [2]
+    exemplars, members = cluster_uint8(data, 2)
+    print("Exemplars:", exemplars)  # noqa: T201
+    print("Members:", members)  # noqa: T201

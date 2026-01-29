@@ -952,7 +952,7 @@ wheels = [
 
 [[package]]
 name = "posterize"
-version = "1.1.0"
+version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "basic-colormath" },
@@ -1169,6 +1169,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "paragraphs" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/65/ec/239fa50de9de48a0b249d642e99153a57c9d16032cb53d064c2524b1e286/svg_path_data-0.7.1.tar.gz", hash = "sha256:1ddad286a8034682388285571841c3bb927f70479c3fa3b34de9fc9b2aac7ffb", size = 12956, upload-time = "2026-01-24T23:31:56.776Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/3b/d9dbbe348f5cd4cc788ae8e38da65d3c2da08d6b1a4da28e17952b2b27fd/svg_path_data-0.7.1-py3-none-any.whl", hash = "sha256:aca3527b678d8eae19c7c1c0b2aedccc59a08a72078d7fdd937410125825655c", size = 15052, upload-time = "2026-01-24T23:31:55.902Z" },
 ]
