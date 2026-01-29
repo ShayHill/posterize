@@ -6,16 +6,22 @@
 
 import itertools as it
 from collections.abc import Iterable
+from functools import partial
+
+import numpy as np
+from numpy import typing as npt
+from typing import Annotated, TypeAlias
 
 from basic_colormath import float_to_8bit_int
 
+_Indices: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r, c)"]
+_Palette: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n, 3)"]
 
-def _aggregate_and_sort(
-    values: Iterable[float],
-    weights: Iterable[float] | None,
+
+def _aggregate_and_sort_floats(
+    values: Iterable[float], weights: Iterable[float]
 ) -> tuple[list[float], list[float]]:
     """Return unique values and their aggregated weights, sorted by value."""
-    weights = weights or [1.0]
     nos = list(values)
     wts = list(it.islice(it.cycle(weights), len(nos)))
     value_to_weight: dict[float, float] = {}
@@ -27,10 +33,24 @@ def _aggregate_and_sort(
     return (nos, wts)
 
 
+def _get_segment_cost(
+    prefix_sum: list[float],
+    prefix_sqd: list[float],
+    prefix_wts: list[float],
+    left: int,
+    right: int,
+) -> float:
+    """Compute weighted variance cost for segment [left, right]."""
+    total_weight = prefix_wts[right + 1] - prefix_wts[left]
+    if total_weight <= 0:
+        return 0.0
+    weighted_sum = prefix_sum[right + 1] - prefix_sum[left]
+    weighted_sq_sum = prefix_sqd[right + 1] - prefix_sqd[left]
+    return weighted_sq_sum - weighted_sum * weighted_sum / total_weight
+
+
 def cluster_floats(
-    values: Iterable[float],
-    k: int,
-    weights: Iterable[float] | None = None,
+    numbers: Iterable[float], k: int, weights: Iterable[float] = (1,)
 ) -> tuple[list[float], list[list[float]]]:
     """Return optimal cluster centers and their members for 1D data.
 
@@ -43,28 +63,17 @@ def cluster_floats(
 
     Uses the Fisher-Jenks natural breaks (optimal 1d k-means) algorithm.
     """
-    if k < 1 or not values:
+    if k < 1 or not numbers:
         return ([], [])
-    nos, wts = _aggregate_and_sort(values, weights)
+    nos, wts = _aggregate_and_sort_floats(numbers, weights)
     n = len(nos)
     k = min(k, n)
 
-    prefix_sum = [0.0] * (n + 1)
-    prefix_sqd = [0.0] * (n + 1)
-    prefix_wts = [0.0] * (n + 1)
-    for i in range(n):
-        prefix_sum[i + 1] = prefix_sum[i] + nos[i] * wts[i]
-        prefix_sqd[i + 1] = prefix_sqd[i] + nos[i] * nos[i] * wts[i]
-        prefix_wts[i + 1] = prefix_wts[i] + wts[i]
+    prefix_sum = [0.0, *it.accumulate(n * w for n, w in zip(nos, wts, strict=True))]
+    prefix_sqd = [0.0, *it.accumulate(n * n * w for n, w in zip(nos, wts, strict=True))]
+    prefix_wts = [0.0, *it.accumulate(wts)]
 
-    def segment_cost(left: int, right: int) -> float:
-        """Compute weighted variance cost for segment [left, right]."""
-        total_weight = prefix_wts[right + 1] - prefix_wts[left]
-        if total_weight <= 0:
-            return 0.0
-        weighted_sum = prefix_sum[right + 1] - prefix_sum[left]
-        weighted_sq_sum = prefix_sqd[right + 1] - prefix_sqd[left]
-        return weighted_sq_sum - weighted_sum * weighted_sum / total_weight
+    segment_cost = partial(_get_segment_cost, prefix_sum, prefix_sqd, prefix_wts)
 
     dp = [[float("inf")] * (k + 1) for _ in range(n + 1)]
     dp[0][0] = 0.0
@@ -79,8 +88,7 @@ def cluster_floats(
     exemplars: list[float] = []
     cluster_members: list[list[float]] = []
     i = n
-    j = k
-    while j > 0:
+    for j in reversed(range(1, k + 1)):
         p = prev[i][j]
         total_weight = prefix_wts[i] - prefix_wts[p]
         if total_weight > 0:
@@ -89,24 +97,27 @@ def cluster_floats(
             exemplars.append(mean)
             cluster_members.append(nos[p:i])
         i = p
-        j -= 1
 
     return (exemplars, cluster_members)
 
 
 def cluster_uint8(
-    values: Iterable[int],
-    k: int,
-    weights: Iterable[float] | None = None,
+    numbers: Iterable[int], k: int, weights: Iterable[float] = (1,)
 ) -> tuple[list[int], list[list[int]]]:
     """Return optimal cluster centers and their members for 8-bit integer values.
 
     Assumes all values are in [0, 255].
     """
-    exemplars, members = cluster_floats(values, k, weights)
+    exemplars, members = cluster_floats(numbers, k, weights)
     exemplars_ = [float_to_8bit_int(x) for x in exemplars]
     members_ = [[int(i) for i in m] for m in members]
     return exemplars_, members_
+
+
+def quantize_mono_pixels(pixels: _Indices, k: int) -> tuple[_Palette, _Indices]:
+    """Quantize monochrome pixels to a palette and indices."""
+    exemplars, members = cluster_uint8(pixels.flatten(), k)
+    return palette, indices
 
 
 # ────────────────────────────────────────────────

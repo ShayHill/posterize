@@ -10,7 +10,11 @@ from posterize.posterization import (
     dump_posterization,
     load_posterization,
 )
-from posterize.quantization import TargetImage, new_target_image
+from posterize.quantization import (
+    TargetImage,
+    new_target_image,
+    new_target_image_from_uint8,
+)
 
 __all__ = [
     "Posterization",
@@ -18,5 +22,6 @@ __all__ = [
     "dump_posterization",
     "load_posterization",
     "new_target_image",
+    "new_target_image_from_uint8",
     "posterize",
 ]

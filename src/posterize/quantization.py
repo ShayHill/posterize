@@ -50,6 +50,7 @@ def _np_reshape(array: _AnyArray, shape: tuple[int, ...]) -> _AnyArray:
     """
     if array.shape == shape:
         return array
+    # TODO: try dtype=array.dtype instead of cast
     return cast("_AnyArray", np.reshape(array, shape))
 
 
@@ -238,13 +239,29 @@ def _dump_quantized_image(quantized_image: TargetImage, source: Path) -> None:
             np.save(f, getattr(quantized_image, name))
 
 
+def _quantize_image(image: Image.Image) -> TargetImage:
+    """Reduce an RGBA image to 512 indexed colors.
+
+    :param image: PIL Image in RGBA mode
+    :return: TargetImage (palette, indices, pmatrix)
+    """
+    rgba_colors = _np_reshape(np.array(image), (-1, 4))
+    rgb_colors = rgba_colors[:, :3]
+    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
+    indices = _index_to_nearest_color(palette, rgb_colors)
+    indices = _np_reshape(indices, (image.height, image.width))
+    pmatrix = get_delta_e_matrix(palette)
+    return TargetImage(palette, indices, pmatrix)
+
+
 def new_target_image(
-    source: Union[Path, Image.Image], *, ignore_cache: bool = False
+    source: Path | Image.Image, *, ignore_cache: bool = False
 ) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
     :param source: path to an image or a PIL Image object
-    :param ignore_cache: if True, ignore any cached results (only used when source is a Path)
+    :param ignore_cache: if True, ignore any cached results
+        (only used when source is a Path)
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
     if isinstance(source, Path):
@@ -252,34 +269,31 @@ def new_target_image(
             clear_quantized_image_cache(source)
         with suppress(FileNotFoundError):
             return _load_quantized_image(source)
-
         image = Image.open(source)
         if max(image.size) > _MAX_DIM:
             image.thumbnail((_MAX_DIM, _MAX_DIM), Image.Resampling.LANCZOS)
         image = image.convert("RGBA")
-
-        rgba_colors = _np_reshape(np.array(image), (-1, 4))
-        rgb_colors = rgba_colors[:, :3]
-
-        palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-        indices = _index_to_nearest_color(palette, rgb_colors)
-        indices = _np_reshape(indices, (image.height, image.width))
-        pmatrix = get_delta_e_matrix(palette)
-
-        quantized_image = TargetImage(palette, indices, pmatrix)
+        quantized_image = _quantize_image(image)
         _dump_quantized_image(quantized_image, source)
-
         return quantized_image
-    else:
-        # source is a PIL Image object
-        image = source.convert("RGBA")
+    image = source.convert("RGBA")
+    return _quantize_image(image)
 
-        rgba_colors = _np_reshape(np.array(image), (-1, 4))
-        rgb_colors = rgba_colors[:, :3]
 
-        palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-        indices = _index_to_nearest_color(palette, rgb_colors)
-        indices = _np_reshape(indices, (image.height, image.width))
-        pmatrix = get_delta_e_matrix(palette)
+def new_target_image_from_uint8(
+    pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
+) -> TargetImage:
+    """Build a TargetImage from an (r, c) uint8 array (e.g. grayscale).
 
-        return TargetImage(palette, indices, pmatrix)
+    :param pixels: (r, c) array of uint8 values.
+    :return: TargetImage with palette (n_unique, 3), indices (r, c), pmatrix
+
+    This is a faster way for creating a TargetImage from a grayscale image or an array
+    of values created by the bezograph algorithm.
+    """
+    unique_vals = np.unique(pixels)
+    flat = pixels.ravel()
+    indices = _np_reshape(np.searchsorted(unique_vals, flat), pixels.shape)
+    palette = np.repeat(unique_vals[:, np.newaxis], 3, axis=1).astype(np.uint8)
+    pmatrix = get_delta_e_matrix(palette)
+    return TargetImage(palette, indices, pmatrix)
