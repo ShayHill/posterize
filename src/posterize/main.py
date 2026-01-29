@@ -21,7 +21,7 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import numpy as np
 from numpy import typing as npt
@@ -30,7 +30,7 @@ from PIL import Image
 from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.posterization import Posterization
-from posterize.quantization import TargetImage, new_target_image
+from posterize.quantization import TargetImage, new_target_image, new_target_image_mono
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -126,9 +126,7 @@ class ImageApproximation:
         self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
         self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
 
-        palette = cast(
-            "Iterable[npt.NDArray[np.uint8]]", self.target.palette
-        )
+        palette = cast("Iterable[npt.NDArray[np.uint8]]", self.target.palette)
         vibrancies = np.array([get_vibrance(c) for c in palette])
         self.target.weights = (
             self.target.weights * (1 - self.vibrant_weight)
@@ -311,6 +309,29 @@ def posterize(
         target = new_target_image(image, ignore_cache=ignore_quantized_image_cache)
     else:
         target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)
+    state = ImageApproximation(
+        target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
+    )
+    state.two_pass_fill_layers(num_cols)
+    return Posterization(target.indices, target.palette, state.layers)
+
+
+def posterize_mono(
+    pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
+    num_cols: int,
+    *,
+    savings_weight: None | float = None,
+    vibrant_weight: None | float = None,
+) -> Posterization:
+    """Posterize a monochrome (r, c) uint8 array.
+
+    :param pixels: (r, c) array of uint8 values (e.g. grayscale)
+    :param num_cols: number of colors in the posterization
+    :param savings_weight: weight for the savings metric vs average savings
+    :param vibrant_weight: weight for the vibrance metric vs savings metric
+    :return: posterized result
+    """
+    target = new_target_image_mono(pixels)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )

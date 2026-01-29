@@ -14,8 +14,8 @@ TEST_RESOURCES = Path(__file__).parent / "resources"
 
 FULL_COLOR = TEST_RESOURCES / "full_color.webp"
 
-class TestQuantization:
 
+class TestQuantization:
     def test_min_max_all_equal(self):
         """Return an array of zeros when all values are equal."""
         array = np.array([5, 5, 5])
@@ -31,4 +31,3 @@ class TestQuantization:
         assert np.array_equal(target_image.weights, new_weights)
         target_image.reset_weights()
         assert np.array_equal(target_image.weights, old_weights)
-

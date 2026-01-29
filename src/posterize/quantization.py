@@ -280,7 +280,7 @@ def new_target_image(
     return _quantize_image(image)
 
 
-def new_target_image_from_uint8(
+def new_target_image_mono(
     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
 ) -> TargetImage:
     """Build a TargetImage from an (r, c) uint8 array (e.g. grayscale).

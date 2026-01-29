@@ -14,7 +14,11 @@ from posterize.paths import CACHE_DIR
 
 from posterize.main import ImageApproximation, _set_max_val_to_one, posterize
 from posterize.posterization import Posterization
-from posterize.quantization import new_target_image, clear_all_quantized_image_caches, _CACHE_PREFIX
+from posterize.quantization import (
+    new_target_image,
+    clear_all_quantized_image_caches,
+    _CACHE_PREFIX,
+)
 
 TEST_RESOURCES = Path(__file__).parent / "resources"
 
@@ -43,6 +47,7 @@ def mono_posterized() -> Posterization:
     return posterize(
         MONOCHROME, 6, ignore_quantized_image_cache=IGNORE_QUANTIZED_IMAGE_CACHE
     )
+
 
 def test_clear_all_quantized_image_caches():
     """The best assertion that this has run is that the tests take a long time."""
@@ -121,9 +126,7 @@ class TestImageApproximation:
         expect = np.load(FULL_COLOR_6_LAYERS)
         np.testing.assert_array_equal(image_approx.layers, expect)
 
-    def test_do_not_overfill_layers(
-        self, rgb_posterized: Posterization
-    ):
+    def test_do_not_overfill_layers(self, rgb_posterized: Posterization):
         """Do not overfill layers when passing layers to ImageApproximation."""
         target_image = new_target_image(FULL_COLOR)
         image_approx = ImageApproximation(target_image)
