@@ -14,7 +14,7 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, Any, TypeAlias, TypeVar, Union, cast
+from typing import Annotated, Any, TypeAlias, TypeVar, cast
 
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
@@ -50,7 +50,6 @@ def _np_reshape(array: _AnyArray, shape: tuple[int, ...]) -> _AnyArray:
     """
     if array.shape == shape:
         return array
-    # TODO: try dtype=array.dtype instead of cast
     return cast("_AnyArray", np.reshape(array, shape))
 
 
@@ -66,7 +65,7 @@ def _min_max_normalize(
     max_val = np.max(array)
     if min_val == max_val:
         return np.zeros_like(array, dtype=np.float64)
-    return (array - min_val) / (max_val - min_val)
+    return cast("npt.NDArray[np.float64]", (array - min_val) / (max_val - min_val))
 
 
 class TargetImage:
