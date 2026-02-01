@@ -12,10 +12,12 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 :created: 2025-04-24
 """
 
-from contextlib import suppress
+import dataclasses
+import os
 from pathlib import Path
 from typing import Annotated, Any, TypeAlias, TypeVar, cast
 
+import diskcache
 import numpy as np
 from basic_colormath import floats_to_uint8, get_delta_e_matrix
 from cluster_colors import stack_pool_cut_colors
@@ -24,6 +26,8 @@ from PIL import Image
 
 from posterize.layers import merge_layers
 from posterize.paths import CACHE_DIR
+
+cache = diskcache.Cache(".cache_quantize")
 
 _CACHE_PREFIX = "quantized_"
 
@@ -59,12 +63,12 @@ def _min_max_normalize(
     """Normalize an array to the range [0, 1].
 
     :param array: array to normalize
-    :return: normalized array or array of zeros if all values are the same
+    :return: normalized array or array of ones if all values are the same
     """
     min_val = np.min(array)
     max_val = np.max(array)
     if min_val == max_val:
-        return np.zeros_like(array, dtype=np.float64)
+        return np.ones_like(array, dtype=np.float64)
     return cast("npt.NDArray[np.float64]", (array - min_val) / (max_val - min_val))
 
 
@@ -253,8 +257,77 @@ def _quantize_image(image: Image.Image) -> TargetImage:
     return TargetImage(palette, indices, pmatrix)
 
 
+@dataclasses.dataclass
+class Quantized:
+    """A quantized image.
+
+    :param palette: (n, 3) array of color vectors
+    :param indices: (r, c) array of indices to the palette colors. This defines
+        the source image in n colors.
+    :param pmatrix: (n, n) array of delta E values between the palette colors.
+    :param alphas: (n,) array of alpha values for each color.
+    """
+
+    palette: Annotated[npt.NDArray[np.uint8], "(n,3)"]
+    indices: Annotated[npt.NDArray[np.intp], "(r,c)"]
+    pmatrix: Annotated[npt.NDArray[np.float64], "(n,n)"]
+    alphas: Annotated[npt.NDArray[np.uint8], "(n,)"]
+
+
+def quantize_image(
+    image_path: str | os.PathLike[str], max_dim: int | None = None
+) -> Quantized:
+    """Reduce an image file to at most 512 indexed colors.
+
+    :param path: path to the image file
+    :param max_dim: maximum width or height; image is thumbnailed if larger
+    :return: Quantized with palette, indices, pmatrix, and alphas
+    """
+    max_dim = max_dim or _MAX_DIM
+    image = Image.open(image_path)
+    if max(image.size) > max_dim:
+        image.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+    image = image.convert("RGBA")
+    return quantize_rgba(np.array(image))
+
+
+@cache.memoize()
+def quantize_rgba(
+    rgba_pixels: Annotated[npt.NDArray[np.uint8], "(r, c, 4)"],
+) -> Quantized:
+    """Reduce an (r, c, 4) RGBA array to at most 512 indexed colors.
+
+    :param rgba_pixels: (r, c, 4) uint8 array of RGBA pixels
+    :return: Quantized with palette, indices, pmatrix, and alphas
+    """
+    rgbs = rgba_pixels[..., :3]
+    alphas = rgba_pixels[..., 3]
+    rgb_colors = _np_reshape(rgbs, (-1, 3)).astype(float)
+    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgb_colors)))
+    indices = _index_to_nearest_color(palette, rgb_colors)
+    indices = _np_reshape(indices, rgba_pixels.shape[:2])
+    pmatrix = get_delta_e_matrix(palette)
+    return Quantized(palette, indices, pmatrix, alphas)
+
+
+@cache.memoize()
+def quantize_mono(mono_pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"]) -> Quantized:
+    """Reduce a (r, c) uint8 array to at most 256 indexed colors.
+
+    :param mono_pixels: (r, c) uint8 array of grayscale pixels
+    :return: Quantized with palette, indices, pmatrix, and alphas
+    """
+    unique_vals = np.unique(mono_pixels)
+    flat = mono_pixels.ravel()
+    indices = _np_reshape(np.searchsorted(unique_vals, flat), mono_pixels.shape)
+    palette = np.repeat(unique_vals[:, np.newaxis], 3, axis=1).astype(np.uint8)
+    pmatrix = get_delta_e_matrix(palette)
+    alphas = np.ones_like(unique_vals, dtype=np.uint8)
+    return Quantized(palette, indices, pmatrix, alphas)
+
+
 def new_target_image(
-    source: Path | Image.Image, *, ignore_cache: bool = False
+    path: str | os.PathLike[str], max_dim: int | None = None
 ) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
@@ -263,36 +336,50 @@ def new_target_image(
         (only used when source is a Path)
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
-    if isinstance(source, Path):
-        if ignore_cache:
-            clear_quantized_image_cache(source)
-        with suppress(FileNotFoundError):
-            return _load_quantized_image(source)
-        image = Image.open(source)
-        if max(image.size) > _MAX_DIM:
-            image.thumbnail((_MAX_DIM, _MAX_DIM), Image.Resampling.LANCZOS)
-        image = image.convert("RGBA")
-        quantized_image = _quantize_image(image)
-        _dump_quantized_image(quantized_image, source)
-        return quantized_image
-    image = source.convert("RGBA")
-    return _quantize_image(image)
+    quantized = quantize_image(path, max_dim)
+    return TargetImage(quantized.palette, quantized.indices, quantized.pmatrix)
 
 
 def new_target_image_mono(
     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
 ) -> TargetImage:
-    """Build a TargetImage from an (r, c) uint8 array (e.g. grayscale).
+    """Reduce a grayscale image to 256 indexed colors.
 
     :param pixels: (r, c) array of uint8 values.
-    :return: TargetImage with palette (n_unique, 3), indices (r, c), pmatrix
-
-    This is a faster way for creating a TargetImage from a grayscale image or an array
-    of values created by the bezograph algorithm.
+    :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
-    unique_vals = np.unique(pixels)
-    flat = pixels.ravel()
-    indices = _np_reshape(np.searchsorted(unique_vals, flat), pixels.shape)
-    palette = np.repeat(unique_vals[:, np.newaxis], 3, axis=1).astype(np.uint8)
-    pmatrix = get_delta_e_matrix(palette)
-    return TargetImage(palette, indices, pmatrix)
+    quantized = quantize_mono(pixels)
+    return TargetImage(quantized.palette, quantized.indices, quantized.pmatrix)
+
+
+# def new_target_image_mono(
+#     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
+# ) -> TargetImage:
+#     """Build a TargetImage from an (r, c) uint8 array (e.g. grayscale).
+
+#     :param pixels: (r, c) array of uint8 values.
+#     :return: TargetImage with palette (n_unique, 3), indices (r, c), pmatrix
+
+#     This is a faster way for creating a TargetImage from a grayscale image or an array
+#     of values created by the bezograph algorithm.
+#     """
+#     unique_vals = np.unique(pixels)
+#     flat = pixels.ravel()
+#     indices = _np_reshape(np.searchsorted(unique_vals, flat), pixels.shape)
+#     palette = np.repeat(unique_vals[:, np.newaxis], 3, axis=1).astype(np.uint8)
+#     pmatrix = get_delta_e_matrix(palette)
+#     return TargetImage(palette, indices, pmatrix)
+
+
+if __name__ == "__main__":
+    import time
+
+    beg = time.time()
+    target = new_target_image("chaucer.png")
+    end = time.time()
+    print(f"Time taken (image): {end - beg} seconds")
+
+    beg = time.time()
+    target = new_target_image_mono(np.array([[0, 0, 0], [255, 255, 255]]))
+    end = time.time()
+    print(f"Time taken (mono): {end - beg} seconds")

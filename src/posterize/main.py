@@ -21,8 +21,10 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
+import diskcache
 import numpy as np
 from numpy import typing as npt
 from PIL import Image
@@ -35,6 +37,9 @@ from posterize.quantization import TargetImage, new_target_image, new_target_ima
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
+
+
+cache = diskcache.Cache(".cache_posterize")
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
@@ -280,14 +285,14 @@ class ImageApproximation:
         return candidates[best_idx]
 
 
+@cache.memoize()
 def posterize(
-    image_path: Path,
+    image_path: str | os.PathLike[str],
     num_cols: int,
     *,
     savings_weight: None | float = None,
     vibrant_weight: None | float = None,
-    ignore_quantized_image_cache: bool = False,
-    resolution: None | int = None,
+    max_dim: None | int = None,
 ) -> Posterization:
     """Posterize an image.
 
@@ -302,13 +307,7 @@ def posterize(
         of this value before processing. The resized image is not written to disk.
     :return: posterized image result
     """
-    if resolution is not None:
-        image = Image.open(image_path)
-        if max(image.size) > resolution:
-            image.thumbnail((resolution, resolution), Image.Resampling.LANCZOS)
-        target = new_target_image(image, ignore_cache=ignore_quantized_image_cache)
-    else:
-        target = new_target_image(image_path, ignore_cache=ignore_quantized_image_cache)
+    target = new_target_image(image_path, max_dim)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )
@@ -316,6 +315,7 @@ def posterize(
     return Posterization(target.indices, target.palette, state.layers)
 
 
+@cache.memoize()
 def posterize_mono(
     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
     num_cols: int,
@@ -337,3 +337,23 @@ def posterize_mono(
     )
     state.two_pass_fill_layers(num_cols)
     return Posterization(target.indices, target.palette, state.layers)
+
+
+if __name__ == "__main__":
+    import time
+
+    beg = time.time()
+    posterized = posterize("chaucer.png", 9)
+    end = time.time()
+    print(f"Time taken (image): {end - beg} seconds")
+    posterized.write_svg("chaucer_posterized.png")
+
+    image = Image.open("chaucer.png")
+    pixels = np.array(image)
+    mono = pixels[:, :, 0]
+
+    beg = time.time()
+    posterized = posterize_mono(mono, 9)
+    end = time.time()
+    print(f"Time taken (mono): {end - beg} seconds")
+    posterized.write_svg("chaucer_posterized_mono.png")
