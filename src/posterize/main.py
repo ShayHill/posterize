@@ -21,13 +21,11 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import diskcache
 import numpy as np
 from numpy import typing as npt
-from PIL import Image
 
 from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
@@ -35,8 +33,8 @@ from posterize.posterization import Posterization
 from posterize.quantization import TargetImage, new_target_image, new_target_image_mono
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Iterable
-    from pathlib import Path
 
 
 cache = diskcache.Cache(".cache_posterize")
@@ -322,17 +320,3 @@ def posterize_mono(
     )
     state.two_pass_fill_layers(num_cols)
     return Posterization(target.indices, target.palette, state.layers)
-
-
-def this_is_all_i_need_to_do():
-    posterized = posterize("chaucer.png", 9)
-    _ = posterized.write_svg("chaucer_posterized.svg")
-
-    image = Image.open("chaucer.png")
-    mono = np.array(image)[:, :, 0]
-    posterized = posterize_mono(mono, 9)
-    _ = posterized.write_svg("chaucer_posterized_mono.svg")
-
-
-if __name__ == "__main__":
-    this_is_all_i_need_to_do()
