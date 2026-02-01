@@ -163,21 +163,6 @@ class ImageApproximation:
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.concatenate([self.layers, [new_layer]])
 
-    def fill_layers(self, num_layers: int) -> None:
-        """Add layers until there are num_layers.
-
-        :param num_layers: the number of layers to end up with. Will silently return
-            fewer layers if all colors are exhausted.
-        :effect: update state.layers
-        """
-        if len(self.layers) >= num_layers:
-            return
-        try:
-            self._add_one_layer()
-        except ColorsExhaustedError:
-            return
-        self.fill_layers(num_layers)
-
     def two_pass_fill_layers(self, num_layers: int) -> None:
         """Fill layers to create masks then fill masks to create layers.
 
@@ -339,21 +324,15 @@ def posterize_mono(
     return Posterization(target.indices, target.palette, state.layers)
 
 
-if __name__ == "__main__":
-    import time
-
-    beg = time.time()
+def this_is_all_i_need_to_do():
     posterized = posterize("chaucer.png", 9)
-    end = time.time()
-    print(f"Time taken (image): {end - beg} seconds")
-    posterized.write_svg("chaucer_posterized.png")
+    _ = posterized.write_svg("chaucer_posterized.svg")
 
     image = Image.open("chaucer.png")
-    pixels = np.array(image)
-    mono = pixels[:, :, 0]
-
-    beg = time.time()
+    mono = np.array(image)[:, :, 0]
     posterized = posterize_mono(mono, 9)
-    end = time.time()
-    print(f"Time taken (mono): {end - beg} seconds")
-    posterized.write_svg("chaucer_posterized_mono.png")
+    _ = posterized.write_svg("chaucer_posterized_mono.svg")
+
+
+if __name__ == "__main__":
+    this_is_all_i_need_to_do()

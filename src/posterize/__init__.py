@@ -5,11 +5,7 @@
 """
 
 from posterize.main import posterize, posterize_mono
-from posterize.posterization import (
-    Posterization,
-    dump_posterization,
-    load_posterization,
-)
+from posterize.posterization import Posterization
 from posterize.quantization import (
     TargetImage,
     new_target_image,
@@ -19,8 +15,6 @@ from posterize.quantization import (
 __all__ = [
     "Posterization",
     "TargetImage",
-    "dump_posterization",
-    "load_posterization",
     "new_target_image",
     "new_target_image_mono",
     "posterize",

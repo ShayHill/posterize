@@ -11,7 +11,6 @@ elements, and writing SVG files.
 from __future__ import annotations
 
 import dataclasses
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, TypeAlias, cast
 
@@ -21,7 +20,6 @@ from basic_colormath import rgb_to_hex
 from numpy import typing as npt
 
 from posterize.image_processing import layer_to_svgd
-from posterize.layers import merge_layers
 
 if TYPE_CHECKING:
     import os
@@ -157,17 +155,3 @@ class Posterization:
         """
         root = self.new_root(num_cols)
         return su.write_svg(Path(path), root)
-
-
-def dump_posterization(
-    posterization: Posterization, path: str | os.PathLike[str]
-) -> None:
-    """Dump a Posterization object to a JSON file."""
-    with Path(path).open("w") as f:
-        json.dump(dataclasses.asdict(posterization), f)
-
-
-def load_posterization(path: str | os.PathLike[str]) -> Posterization:
-    """Load a Posterization object from a JSON file."""
-    with Path(path).open("r") as f:
-        return Posterization(**json.load(f))

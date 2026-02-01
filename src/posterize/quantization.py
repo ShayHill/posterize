@@ -14,7 +14,6 @@ _MAX_DIM if they are larger than _MAX_DIM in either dimension.
 
 import dataclasses
 import os
-from pathlib import Path
 from typing import Annotated, Any, TypeAlias, TypeVar, cast
 
 import diskcache
@@ -25,11 +24,8 @@ from numpy import typing as npt
 from PIL import Image
 
 from posterize.layers import merge_layers
-from posterize.paths import CACHE_DIR
 
 cache = diskcache.Cache(".cache_quantize")
-
-_CACHE_PREFIX = "quantized_"
 
 # Resize images larger than this to this maximum dimension. This value is necessary,
 # because you can only create arrays of a certain size. A smaller value might speed
@@ -184,79 +180,6 @@ def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     return np.argmin(pmatrix[reverse_index], axis=1)
 
 
-def _get_cache_paths(source: Path) -> dict[str, Path]:
-    """Get the cache paths for the quantized image.
-
-    :param source: path to an image
-    :return: a dictionary with the cache paths for the quantized image
-        * The keys are "palette", "indices", and "pmatrix"
-        * The values are the path + stems to the cache files
-    """
-    prefix = f"{_CACHE_PREFIX}_{source.stem}"
-    attribs = ("palette", "indices", "pmatrix")
-    return {a: CACHE_DIR / f"{prefix}_{a}.npy" for a in attribs}
-
-
-def clear_quantized_image_cache(source: Path) -> None:
-    """Clear the cache for one quantized image.
-
-    :param source: path to the source image previously quantizes
-    """
-    cache_paths = _get_cache_paths(source)
-    for path in cache_paths.values():
-        if path.exists():
-            path.unlink()
-
-
-def clear_all_quantized_image_caches() -> None:
-    """Clear all caches for quantized images."""
-    for path in CACHE_DIR.glob(f"{_CACHE_PREFIX}*.npy"):
-        path.unlink()
-
-
-def _load_quantized_image(source: Path) -> TargetImage:
-    """Load a quantized image from the cache.
-
-    :param source: path to the source image previously quantizes
-    :return: a TargetImage object
-    """
-    cache_paths = _get_cache_paths(source)
-    if not all(path.exists() for path in cache_paths.values()):
-        msg = f"Cache files not found for {source}. "
-        raise FileNotFoundError(msg)
-    palette = np.load(cache_paths["palette"])
-    indices = np.load(cache_paths["indices"])
-    pmatrix = np.load(cache_paths["pmatrix"])
-    return TargetImage(palette, indices, pmatrix)
-
-
-def _dump_quantized_image(quantized_image: TargetImage, source: Path) -> None:
-    """Dump a quantized image to the cache.
-
-    :param quantized_image: a TargetImage object
-    :param source: path to the source image previously quantizes
-    """
-    cache_paths = _get_cache_paths(source)
-    for name, path in cache_paths.items():
-        with path.open("wb") as f:
-            np.save(f, getattr(quantized_image, name))
-
-
-def _quantize_image(image: Image.Image) -> TargetImage:
-    """Reduce an RGBA image to 512 indexed colors.
-
-    :param image: PIL Image in RGBA mode
-    :return: TargetImage (palette, indices, pmatrix)
-    """
-    rgba_colors = _np_reshape(np.array(image), (-1, 4))
-    rgb_colors = rgba_colors[:, :3]
-    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgba_colors)[:, :3]))
-    indices = _index_to_nearest_color(palette, rgb_colors)
-    indices = _np_reshape(indices, (image.height, image.width))
-    pmatrix = get_delta_e_matrix(palette)
-    return TargetImage(palette, indices, pmatrix)
-
-
 @dataclasses.dataclass
 class Quantized:
     """A quantized image.
@@ -350,36 +273,3 @@ def new_target_image_mono(
     """
     quantized = quantize_mono(pixels)
     return TargetImage(quantized.palette, quantized.indices, quantized.pmatrix)
-
-
-# def new_target_image_mono(
-#     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
-# ) -> TargetImage:
-#     """Build a TargetImage from an (r, c) uint8 array (e.g. grayscale).
-
-#     :param pixels: (r, c) array of uint8 values.
-#     :return: TargetImage with palette (n_unique, 3), indices (r, c), pmatrix
-
-#     This is a faster way for creating a TargetImage from a grayscale image or an array
-#     of values created by the bezograph algorithm.
-#     """
-#     unique_vals = np.unique(pixels)
-#     flat = pixels.ravel()
-#     indices = _np_reshape(np.searchsorted(unique_vals, flat), pixels.shape)
-#     palette = np.repeat(unique_vals[:, np.newaxis], 3, axis=1).astype(np.uint8)
-#     pmatrix = get_delta_e_matrix(palette)
-#     return TargetImage(palette, indices, pmatrix)
-
-
-if __name__ == "__main__":
-    import time
-
-    beg = time.time()
-    target = new_target_image("chaucer.png")
-    end = time.time()
-    print(f"Time taken (image): {end - beg} seconds")
-
-    beg = time.time()
-    target = new_target_image_mono(np.array([[0, 0, 0], [255, 255, 255]]))
-    end = time.time()
-    print(f"Time taken (mono): {end - beg} seconds")
