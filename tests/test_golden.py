@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from posterize.main import cache as posterize_cache
 from posterize.main import posterize, posterize_mono
+from posterize.quantization import cache as quantization_cache
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _GOLDEN_DIR = _TESTS_DIR / "golden"
@@ -18,8 +20,8 @@ NUM_COLS = 9
 @pytest.fixture(autouse=True)
 def _clear_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     """Clear posterize and quantization caches before each golden test."""
-    # Path(".cache_posterize").unlink(missing_ok=True)
-    # Path(".cache_quantize").unlink(missing_ok=True)
+    _ = posterize_cache.clear()
+    _ = quantization_cache.clear()
 
 
 def test_posterize_golden() -> None:

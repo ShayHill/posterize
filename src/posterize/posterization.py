@@ -20,6 +20,7 @@ from basic_colormath import rgb_to_hex
 from numpy import typing as npt
 
 from posterize.image_processing import layer_to_svgd
+from posterize.layers import merge_layers
 
 if TYPE_CHECKING:
     import os

@@ -802,26 +802,7 @@ class Cache:
         """
         ...
 
-    def clear(self, retry=...):  # -> int:
-        """Remove all items from cache.
-
-        Removing items is an iterative process. In each iteration, a subset of
-        items is removed. Concurrent writes may occur between iterations.
-
-        If a :exc:`Timeout` occurs, the first element of the exception's
-        `args` attribute will be the number of items removed before the
-        exception occurred.
-
-        Raises :exc:`Timeout` error when database timeout occurs and `retry` is
-        `False` (default).
-
-        :param bool retry: retry if database timeout occurs (default False)
-        :return: count of rows removed
-        :raises Timeout: if database timeout occurs
-
-        """
-        ...
-
+    def clear(self, retry: bool = False) -> int: ...
     def iterkeys(self, reverse=...):  # -> Generator[bytes | Any, Any, None]:
         """Iterate Cache keys in database sort order.
 
