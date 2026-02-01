@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 """Persistent Data Types
 """
+
 class Deque(Sequence):
     """Persistent sequence with double-ended queue semantics.
 
@@ -46,9 +47,9 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     @classmethod
-    def fromcache(cls, cache, iterable=..., maxlen=...): # -> Self:
+    def fromcache(cls, cache, iterable=..., maxlen=...):  # -> Self:
         """Initialize deque using `cache`.
 
         >>> cache = Cache()
@@ -68,24 +69,24 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     @property
-    def cache(self): # -> Cache:
+    def cache(self):  # -> Cache:
         """Cache used by deque."""
         ...
-    
+
     @property
-    def directory(self): # -> str:
+    def directory(self):  # -> str:
         """Directory path where deque is stored."""
         ...
-    
+
     @property
-    def maxlen(self): # -> float:
+    def maxlen(self):  # -> float:
         """Max length of the deque."""
         ...
-    
+
     @maxlen.setter
-    def maxlen(self, value): # -> None:
+    def maxlen(self, value):  # -> None:
         """Set max length of the deque.
 
         Pops items from left while length greater than max.
@@ -100,8 +101,10 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __getitem__(self, index): # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
+
+    def __getitem__(
+        self, index
+    ):  # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
         """deque.__getitem__(index) <==> deque[index]
 
         Return corresponding item for `index` in deque.
@@ -122,8 +125,8 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __setitem__(self, index, value): # -> None:
+
+    def __setitem__(self, index, value):  # -> None:
         """deque.__setitem__(index, value) <==> deque[index] = value
 
         Store `value` in deque at `index`.
@@ -142,8 +145,8 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __delitem__(self, index): # -> None:
+
+    def __delitem__(self, index):  # -> None:
         """deque.__delitem__(index) <==> del deque[index]
 
         Delete item in deque at `index`.
@@ -161,22 +164,22 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __repr__(self): # -> str:
+
+    def __repr__(self):  # -> str:
         """deque.__repr__() <==> repr(deque)
 
         Return string with printable representation of deque.
 
         """
         ...
-    
+
     __eq__ = ...
     __ne__ = ...
     __lt__ = ...
     __gt__ = ...
     __le__ = ...
     __ge__ = ...
-    def __iadd__(self, iterable): # -> Self:
+    def __iadd__(self, iterable):  # -> Self:
         """deque.__iadd__(iterable) <==> deque += iterable
 
         Extend back side of deque with items from iterable.
@@ -186,24 +189,28 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __iter__(self): # -> Generator[tuple[Any | None, None, None] | tuple[Any | None, None] | Any | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None, Any, None]:
+
+    def __iter__(
+        self,
+    ):  # -> Generator[tuple[Any | None, None, None] | tuple[Any | None, None] | Any | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None, Any, None]:
         """deque.__iter__() <==> iter(deque)
 
         Return iterator of deque from front to back.
 
         """
         ...
-    
-    def __len__(self): # -> int:
+
+    def __len__(self):  # -> int:
         """deque.__len__() <==> len(deque)
 
         Return length of deque.
 
         """
         ...
-    
-    def __reversed__(self): # -> Generator[tuple[Any | None, None, None] | tuple[Any | None, None] | Any | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None, Any, None]:
+
+    def __reversed__(
+        self,
+    ):  # -> Generator[tuple[Any | None, None, None] | tuple[Any | None, None] | Any | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None, Any, None]:
         """deque.__reversed__() <==> reversed(deque)
 
         Return iterator of deque from back to front.
@@ -218,14 +225,12 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def __getstate__(self): # -> tuple[str, float | Any]:
+
+    def __getstate__(self):  # -> tuple[str, float | Any]:
         ...
-    
-    def __setstate__(self, state): # -> None:
+    def __setstate__(self, state):  # -> None:
         ...
-    
-    def append(self, value): # -> None:
+    def append(self, value):  # -> None:
         """Add `value` to back of deque.
 
         >>> deque = Deque()
@@ -239,9 +244,9 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     _append = ...
-    def appendleft(self, value): # -> None:
+    def appendleft(self, value):  # -> None:
         """Add `value` to front of deque.
 
         >>> deque = Deque()
@@ -255,9 +260,9 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     _appendleft = ...
-    def clear(self): # -> None:
+    def clear(self):  # -> None:
         """Remove all elements from deque.
 
         >>> deque = Deque('abc')
@@ -269,13 +274,13 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     _clear = ...
-    def copy(self): # -> Self:
+    def copy(self):  # -> Self:
         """Copy deque with same directory and max length."""
         ...
-    
-    def count(self, value): # -> int:
+
+    def count(self, value):  # -> int:
         """Return number of occurrences of `value` in deque.
 
         >>> deque = Deque()
@@ -292,17 +297,17 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def extend(self, iterable): # -> None:
+
+    def extend(self, iterable):  # -> None:
         """Extend back side of deque with values from `iterable`.
 
         :param iterable: iterable of values
 
         """
         ...
-    
+
     _extend = ...
-    def extendleft(self, iterable): # -> None:
+    def extendleft(self, iterable):  # -> None:
         """Extend front side of deque with value from `iterable`.
 
         >>> deque = Deque()
@@ -314,8 +319,10 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def peek(self): # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
+
+    def peek(
+        self,
+    ):  # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
         """Peek at value at back of deque.
 
         Faster than indexing deque at -1.
@@ -336,8 +343,10 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def peekleft(self): # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
+
+    def peekleft(
+        self,
+    ):  # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
         """Peek at value at front of deque.
 
         Faster than indexing deque at 0.
@@ -358,8 +367,10 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def pop(self): # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
+
+    def pop(
+        self,
+    ):  # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
         """Remove and return value at back of deque.
 
         If deque is empty then raise IndexError.
@@ -380,9 +391,11 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     _pop = ...
-    def popleft(self): # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
+    def popleft(
+        self,
+    ):  # -> Any | bytes | BufferedReader[_BufferedReaderStream] | str | None:
         """Remove and return value at front of deque.
 
         >>> deque = Deque()
@@ -401,9 +414,9 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     _popleft = ...
-    def remove(self, value): # -> None:
+    def remove(self, value):  # -> None:
         """Remove first occurrence of `value` in deque.
 
         >>> deque = Deque()
@@ -424,8 +437,8 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def reverse(self): # -> None:
+
+    def reverse(self):  # -> None:
         """Reverse deque in place.
 
         >>> deque = Deque()
@@ -436,8 +449,8 @@ class Deque(Sequence):
 
         """
         ...
-    
-    def rotate(self, steps=...): # -> None:
+
+    def rotate(self, steps=...):  # -> None:
         """Rotate deque right by `steps`.
 
         If steps is negative then rotate left.
@@ -455,10 +468,10 @@ class Deque(Sequence):
 
         """
         ...
-    
+
     __hash__ = ...
     @contextmanager
-    def transact(self): # -> Generator[None, Any, None]:
+    def transact(self):  # -> Generator[None, Any, None]:
         """Context manager to perform a transaction by locking the deque.
 
         While the deque is locked, no other write operation is permitted.
@@ -481,8 +494,6 @@ class Deque(Sequence):
 
         """
         ...
-    
-
 
 class Index(MutableMapping):
     """Persistent mutable mapping with insertion order iteration.
@@ -524,10 +535,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
+
     _update = ...
     @classmethod
-    def fromcache(cls, cache, *args, **kwargs): # -> Self:
+    def fromcache(cls, cache, *args, **kwargs):  # -> Self:
         """Initialize index using `cache` and update items.
 
         >>> cache = Cache()
@@ -548,18 +559,20 @@ class Index(MutableMapping):
 
         """
         ...
-    
+
     @property
-    def cache(self): # -> Cache:
+    def cache(self):  # -> Cache:
         """Cache used by index."""
         ...
-    
+
     @property
-    def directory(self): # -> str:
+    def directory(self):  # -> str:
         """Directory path where items are stored."""
         ...
-    
-    def __getitem__(self, key): # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
+
+    def __getitem__(
+        self, key
+    ):  # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
         """index.__getitem__(key) <==> index[key]
 
         Return corresponding value for `key` in index.
@@ -581,8 +594,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def __setitem__(self, key, value): # -> None:
+
+    def __setitem__(self, key, value):  # -> None:
         """index.__setitem__(key, value) <==> index[key] = value
 
         Set `key` and `value` item in index.
@@ -598,8 +611,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def __delitem__(self, key): # -> None:
+
+    def __delitem__(self, key):  # -> None:
         """index.__delitem__(key) <==> del index[key]
 
         Delete corresponding item for `key` from index.
@@ -620,8 +633,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def setdefault(self, key, default=...): # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
+
+    def setdefault(
+        self, key, default=...
+    ):  # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
         """Set and get value for `key` in index using `default`.
 
         If `key` is not in index then set corresponding value to `default`. If
@@ -639,8 +654,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def peekitem(self, last=...): # -> tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any, Any] | tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any] | tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None]:
+
+    def peekitem(
+        self, last=...
+    ):  # -> tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any, Any] | tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any] | tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None]:
         """Peek at key and value item pair in index based on iteration order.
 
         >>> index = Index()
@@ -657,8 +674,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def pop(self, key, default=...): # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
+
+    def pop(
+        self, key, default=...
+    ):  # -> tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | Any | None:
         """Remove corresponding item for `key` from index and return value.
 
         If `key` is missing then return `default`. If `default` is `ENOVAL`
@@ -683,8 +702,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def popitem(self, last=...): # -> tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None] | bytes | Any, Any | bytes | BufferedReader[_BufferedReaderStream] | str | None]:
+
+    def popitem(
+        self, last=...
+    ):  # -> tuple[tuple[bytes | Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None] | bytes | Any, Any | bytes | BufferedReader[_BufferedReaderStream] | str | None]:
         """Remove and return item pair.
 
         Item pairs are returned in last-in-first-out (LIFO) order if last is
@@ -710,8 +731,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def push(self, value, prefix=..., side=...): # -> str | int | Any:
+
+    def push(self, value, prefix=..., side=...):  # -> str | int | Any:
         """Push `value` onto `side` of queue in index identified by `prefix`.
 
         When prefix is None, integer keys are used. Otherwise, string keys are
@@ -741,8 +762,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def pull(self, prefix=..., default=..., side=...): # -> tuple[Any, None, None] | tuple[Any, None] | tuple[tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any, Any] | tuple[tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any] | tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None]:
+
+    def pull(
+        self, prefix=..., default=..., side=...
+    ):  # -> tuple[Any, None, None] | tuple[Any, None] | tuple[tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any, Any] | tuple[tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None], Any] | tuple[Any, bytes | Any | BufferedReader[_BufferedReaderStream] | str | None]:
         """Pull key and value item pair from `side` of queue in index.
 
         When prefix is None, integer keys are used. Otherwise, string keys are
@@ -781,8 +804,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def clear(self): # -> None:
+
+    def clear(self):  # -> None:
         """Remove all items from index.
 
         >>> index = Index({'a': 0, 'b': 1, 'c': 2})
@@ -794,16 +817,16 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def __iter__(self): # -> Generator[bytes | Any | None, Any, None]:
+
+    def __iter__(self):  # -> Generator[bytes | Any | None, Any, None]:
         """index.__iter__() <==> iter(index)
 
         Return iterator of index keys in insertion order.
 
         """
         ...
-    
-    def __reversed__(self): # -> Iterator[bytes | Any | None]:
+
+    def __reversed__(self):  # -> Iterator[bytes | Any | None]:
         """index.__reversed__() <==> reversed(index)
 
         Return iterator of index keys in reversed insertion order.
@@ -818,16 +841,16 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def __len__(self): # -> int:
+
+    def __len__(self):  # -> int:
         """index.__len__() <==> len(index)
 
         Return length of index.
 
         """
         ...
-    
-    def keys(self): # -> KeysView[Any]:
+
+    def keys(self):  # -> KeysView[Any]:
         """Set-like object providing a view of index keys.
 
         >>> index = Index()
@@ -840,8 +863,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def values(self): # -> ValuesView[Any]:
+
+    def values(self):  # -> ValuesView[Any]:
         """Set-like object providing a view of index values.
 
         >>> index = Index()
@@ -854,8 +877,8 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def items(self): # -> ItemsView[Any, Any]:
+
+    def items(self):  # -> ItemsView[Any, Any]:
         """Set-like object providing a view of index items.
 
         >>> index = Index()
@@ -868,14 +891,12 @@ class Index(MutableMapping):
 
         """
         ...
-    
+
     __hash__ = ...
-    def __getstate__(self): # -> str:
+    def __getstate__(self):  # -> str:
         ...
-    
-    def __setstate__(self, state): # -> None:
+    def __setstate__(self, state):  # -> None:
         ...
-    
     def __eq__(self, other) -> bool:
         """index.__eq__(other) <==> index == other
 
@@ -899,7 +920,7 @@ class Index(MutableMapping):
 
         """
         ...
-    
+
     def __ne__(self, other) -> bool:
         """index.__ne__(other) <==> index != other
 
@@ -922,8 +943,10 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def memoize(self, name=..., typed=..., ignore=...): # -> Callable[..., _Wrapped[..., Any, ..., Any | tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None]]:
+
+    def memoize(
+        self, name=..., typed=..., ignore=...
+    ):  # -> Callable[..., _Wrapped[..., Any, ..., Any | tuple[Any | None, None, None] | tuple[Any | None, None] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any, Any] | tuple[bytes | Any | BufferedReader[_BufferedReaderStream] | str | None, Any] | bytes | BufferedReader[_BufferedReaderStream] | str | None]]:
         """Memoizing cache decorator.
 
         Decorator to wrap callable with memoizing function using cache.
@@ -979,9 +1002,9 @@ class Index(MutableMapping):
 
         """
         ...
-    
+
     @contextmanager
-    def transact(self): # -> Generator[None, Any, None]:
+    def transact(self):  # -> Generator[None, Any, None]:
         """Context manager to perform a transaction by locking the index.
 
         While the index is locked, no other write operation is permitted.
@@ -1005,14 +1028,11 @@ class Index(MutableMapping):
 
         """
         ...
-    
-    def __repr__(self): # -> str:
+
+    def __repr__(self):  # -> str:
         """index.__repr__() <==> repr(index)
 
         Return string with printable representation of index.
 
         """
         ...
-    
-
-
