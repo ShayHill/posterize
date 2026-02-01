@@ -71,7 +71,7 @@ class ColorsExhaustedError(Exception):
 def _set_max_val_to_one(floats: Iterable[float]) -> _FltA:
     """Scale an array so the maximum value is 1.
 
-    :param array: the array to scale
+    :param floats: the values to scale
     :return: the scaled array
 
     This is used to scale layer savings and layer weights (all positive numbers) to a
@@ -228,7 +228,7 @@ class ImageApproximation:
     def get_best_candidate_layer(self, mask: _IntA | None = None) -> _IntA:
         """Get the best candidate layer to add to layers.
 
-        :param state_layers: the current state or a presumed state
+        :param mask: optional mask to restrict where the candidate layer is applied
         :return: the candidate layer with the lowest cost
         """
         state = merge_layers(*self.layers)
@@ -284,10 +284,8 @@ def posterize(
         colors are available, will silently return fewer layers / colors.
     :param savings_weight: weight for the savings metric vs average savings
     :param vibrant_weight: weight for the vibrance metric vs savings metric
-    :param ignore_quantized_image_cache: if True, ignore any cached quantized image
-        results
-    :param resolution: if not None, resize the image to have a maximum dimension
-        of this value before processing. The resized image is not written to disk.
+    :param max_dim: if not None, resize the image so its longer side is at most
+        this many pixels before processing. The resized image is not written to disk.
     :return: posterized image result
     """
     target = new_target_image(image_path, max_dim)

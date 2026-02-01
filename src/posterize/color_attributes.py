@@ -17,7 +17,7 @@ _RGBWCMYK: TypeAlias = Annotated[npt.NDArray[np.uint8], (8,)]
 
 
 def get_chromacity(color: _RGB) -> float:
-    """Return the vibrance of the color.
+    """Return the chromacity of the color.
 
     :param color: RGB color as a tuple of three integers in the range [0, 255]
     :return: Chromacity score between 0 and 1, where 0 is gray and 1 is a pure
@@ -25,7 +25,7 @@ def get_chromacity(color: _RGB) -> float:
 
     What is the inverse, relative distance to the color circle?
 
-    A color with a vibrace of 0 is a shade of gray, while a color with a vibrance of
+    A color with a vibrance of 0 is a shade of gray, while a color with a vibrance of
     1 is a pure color with maximum saturation and lightness.
     """
     r, g, b = map(float, color)
@@ -33,9 +33,9 @@ def get_chromacity(color: _RGB) -> float:
 
 
 def _get_rgb_dist(rgb: _RGB) -> _RGBWCMYK:
-    """Convert red, green, blue, transparent to an 8-channel color.
+    """Convert red, green, blue to an 8-channel color distribution.
 
-    :param rgba: 4-channel rgba color
+    :param rgb: 3-channel RGB color
     :return: 8-channel color distribution
     """
     r, g, b = map(float, rgb)

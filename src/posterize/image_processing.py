@@ -29,7 +29,7 @@ _TMP_BMP = CACHE_DIR / "temp.bmp"
 def _write_svg_from_mono_bmp(path_to_mono_bmp: str | os.PathLike[str]) -> Path:
     """Write an svg from a monochrome image.
 
-    :param path_to_mono_bitmap: path to the monochrome image.
+    :param path_to_mono_bmp: path to the monochrome image
     :return: path to the output svg
 
     Images passed in this library will be not only grayscale, but monochrome. So, a

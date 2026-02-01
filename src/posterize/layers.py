@@ -5,7 +5,7 @@ Each layer is 512 values, each either a single color index or -1.
 The original colormap is 512 unique values. For each layer, 1 color index is selected
 and each color in the original map is compared to it. Where the selected color index
 would improve the approximation (in comparison to lower layers), the value in that
-colormap position [0..511] is set to the the selected color index. Where the selected
+colormap position [0..511] is set to the selected color index. Where the selected
 color index would *not* improve the approximation, the value is set to -1.
 
 :author: Shay Hill
@@ -43,10 +43,10 @@ def merge_layers(*layers: _IntA) -> _IntA:
 def apply_mask(layer: _IntA, mask: _IntA | None) -> _IntA:
     """Apply a mask to a layer if the mask is not None.
 
-    :param layer: the layer to apply the map to (shape (512,) consisting of one
+    :param layer: the layer to apply the mask to (shape (512,) consisting of one
         palette index and -1 where transparent)
-    :param map: the map to apply to the layer (shape (512,)) consisting of 1s and 0s
-    :return: the layer with the map applied (shape (512,)) with, most likely,
+    :param mask: the mask to apply to the layer (shape (512,)) consisting of 1s and 0s
+    :return: the layer with the mask applied (shape (512,)) with, most likely,
         additional transparent (-1) values
     """
     if mask is None:

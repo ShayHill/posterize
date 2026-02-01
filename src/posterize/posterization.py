@@ -45,7 +45,7 @@ def _expand_layers(
         quantized image.
 
     Convert the (usually (512,)) layers of an ImageApproximation to the (n, r, c)
-    layers required by draw_posterized_image.
+    layers used for SVG rendering.
     """
     d1_layers_ = cast("Iterable[npt.NDArray[np.intp]]", d1_layers)
     return np.array([x[quantized_image] for x in d1_layers_])
@@ -58,9 +58,7 @@ class Posterization:
     :param indices: (r, c) array with palette indices from the quantized image
     :param palette: (512, 3) array of color vectors
     :param layers: (n, 512) array of n layers, each containing a value (color index)
-        and -1 for transparent
-    :param expanded_layers: (n, r, c) array of layers expanded to the size of the
-        quantized image
+        and -1 for transparent. Expanded to (n, r, c) internally for rendering.
     """
 
     # fields are lists for json serialization

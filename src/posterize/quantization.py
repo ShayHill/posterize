@@ -35,7 +35,7 @@ _MAX_DIM = 500
 
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
 _Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
-_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512e"]
+_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512)"]
 _Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
 _Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
 
@@ -71,7 +71,7 @@ def _min_max_normalize(
 class TargetImage:
     """Cached array values for a quantized image and methods to calculate costs.
 
-    These are intended to be created deterministacally from an image where the weight
+    These are intended to be created deterministically from an image where the weight
     of each color in the palette will correspond to the number of times that color is
     used in the image, but I have created a `weights` attribute setter for
     experimentation with *weighting the weights* with, for instance, color vibrance
@@ -134,14 +134,12 @@ class TargetImage:
         self._weights = None
 
     def get_cost_matrix(self, *layers: _Layers) -> npt.NDArray[np.floating[Any]]:
-        """Get the cost-per-pixel between self.image and (state + layers).
+        """Get the cost-per-pixel between self.image and the merged layers.
 
-        :param layers: layers to apply to the current state. There will only ever be
-            0 or 1 layers. If 0, the cost matrix of the current state will be
-            returned.  If 1, the cost matrix with a layer applied over it.
-        :return: cost-per-pixel between image and (state + layer)
+        :param layers: zero or more layers; merged in order to form the current state
+        :return: cost-per-pixel between image and merged state
 
-        This should decrease after every append.
+        This should decrease after every layer appended.
         """
         state = merge_layers(*layers)
         filled = np.where(state != -1)
@@ -153,11 +151,12 @@ class TargetImage:
         return cost_matrix
 
     def get_cost(self, *layers: _Layer, mask: _Mask | None = None) -> float:
-        """Get the cost between self.image and state with layers applied.
+        """Get the cost between self.image and the merged layers.
 
-        :param layers: layers to apply to the current state. There will only ever be
-            one layer.
-        :return: sum of the cost between image and (state + layer)
+        :param layers: one or more layers (e.g. current state, or state plus a
+            candidate layer) merged in order
+        :param mask: optional mask; where 0, cost is excluded from the sum
+        :return: sum of the cost between image and merged state
         """
         cost_matrix = self.get_cost_matrix(*layers)
         if mask is not None:
@@ -168,12 +167,11 @@ class TargetImage:
 def _index_to_nearest_color(colormap: _Colors, colors: _Colors) -> _Indices:
     """Map a full set of image colors to a colormap.
 
-    :param colormap: colormap to map to (m, n)
-    :param colors: colors (p, n)
-    :return: a (p, 1) array of indices to the colormap
+    :param colormap: colormap to map to (m, 3)
+    :param colors: colors (p, 3)
+    :return: (p,) array of indices into colormap
 
-    For each pixel in an image array (n, 3), find the index of the closest vector
-    in `colormap`.
+    For each row in colors, find the index of the closest row in colormap.
     """
     unique_colors, reverse_index = np.unique(colors, axis=0, return_inverse=True)
     pmatrix = get_delta_e_matrix(unique_colors, colormap)
@@ -202,7 +200,7 @@ def quantize_image(
 ) -> Quantized:
     """Reduce an image file to at most 512 indexed colors.
 
-    :param path: path to the image file
+    :param image_path: path to the image file
     :param max_dim: maximum width or height; image is thumbnailed if larger
     :return: Quantized with palette, indices, pmatrix, and alphas
     """
@@ -254,9 +252,8 @@ def new_target_image(
 ) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
-    :param source: path to an image or a PIL Image object
-    :param ignore_cache: if True, ignore any cached results
-        (only used when source is a Path)
+    :param path: path to an image file
+    :param max_dim: maximum width or height; image is thumbnailed if larger
     :return: a TargetImage object (palette, indices, pmatrix, weights)
     """
     quantized = quantize_image(path, max_dim)
