@@ -1,9 +1,12 @@
 """Golden-master tests for posterize and posterize_mono SVG output."""
 
+import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+from diskcache import JSONDisk
 from PIL import Image
 
 from posterize.main import cache as posterize_cache
@@ -24,25 +27,48 @@ def _clear_caches() -> None:  # pyright: ignore[reportUnusedFunction]
     _ = quantization_cache.clear()
 
 
+def _start_got_and_golden(got_path: Path, golden_path: Path) -> None:
+    """On failure, open both files with the default app (e.g. browser)."""
+    _ = subprocess.run(["cmd", "/c", "start", "", str(got_path)], check=False)
+    _ = subprocess.run(["cmd", "/c", "start", "", str(golden_path)], check=False)
+
+
 def test_posterize_golden() -> None:
     """Generated SVG matches golden chaucer_posterized.svg."""
+    beg = time.time()
     posterized = posterize(str(_CHAUCER_PNG), NUM_COLS)
+    end = time.time()
+    print(f"Posterized color in {end - beg} seconds")  # noqa: T201
     _TMP_DIR.mkdir(exist_ok=True)
     out = _TMP_DIR / "chaucer_posterized.svg"
     _ = posterized.write_svg(out)
     got = out.read_text()
-    golden = (_GOLDEN_DIR / "chaucer_posterized.svg").read_text()
-    assert got == golden
+    golden_path = _GOLDEN_DIR / "chaucer_posterized.svg"
+    golden = golden_path.read_text()
+    try:
+        assert got == golden
+    except AssertionError:
+        _start_got_and_golden(out, golden_path)
+        raise
 
 
 def test_posterize_mono_golden() -> None:
     """Generated SVG matches golden chaucer_posterized_mono.svg."""
+
     image = Image.open(_CHAUCER_PNG)
     mono = np.array(image)[:, :, 0]
+    beg = time.time()
     posterized = posterize_mono(mono, NUM_COLS)
+    end = time.time()
+    print(f"Posterized mono in {end - beg} seconds")  # noqa: T201
     _TMP_DIR.mkdir(exist_ok=True)
     out = _TMP_DIR / "chaucer_posterized_mono.svg"
     _ = posterized.write_svg(out)
     got = out.read_text()
-    golden = (_GOLDEN_DIR / "chaucer_posterized_mono.svg").read_text()
-    assert got == golden
+    golden_path = _GOLDEN_DIR / "chaucer_posterized_mono.svg"
+    golden = golden_path.read_text()
+    try:
+        assert got == golden
+    except AssertionError:
+        _start_got_and_golden(out, golden_path)
+        raise

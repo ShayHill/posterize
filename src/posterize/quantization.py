@@ -33,11 +33,20 @@ cache = diskcache.Cache(".cache_quantize")
 # changes.
 _MAX_DIM = 500
 
-_Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(m,3)"]
-_Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(m,)"]
-_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512)"]
-_Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(512,) in [0, 512)"]
-_Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, 512) in [0, 1]"]
+# any "list" of rgb colors
+_Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,3)"]
+
+# a flat list of indices into the palette
+_Indices: TypeAlias = Annotated[npt.NDArray[np.intp], "(n,)"]
+
+# layers where m is num layers and x is num colors in the palette (in [0, 512))
+_Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(m, n)"]
+
+# a single layer where n is num colors in the palette (in [0, 512))
+_Layer: TypeAlias = Annotated[npt.NDArray[np.intp], "(n,)"]
+
+# a mask where n is num colors in the palette (in [0, 512)). All values in 0 or 1.
+_Mask: TypeAlias = Annotated[npt.NDArray[np.intp], "(n,)"]
 
 
 _AnyArray = TypeVar("_AnyArray", bound=npt.NDArray[Any])
