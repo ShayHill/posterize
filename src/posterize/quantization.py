@@ -233,11 +233,13 @@ def quantize_rgba(
     rgbs = rgba_pixels[..., :3]
     alphas = rgba_pixels[..., 3]
     rgb_colors = _np_reshape(rgbs, (-1, 3)).astype(float)
-    palette = np.array(floats_to_uint8(stack_pool_cut_colors(rgb_colors)))
-    indices = _index_to_nearest_color(palette, rgb_colors)
+    rgb_colors = np.concatenate([rgb_colors, np.ones((rgb_colors.shape[0], 1))], axis=1)
+    palette = np.array(stack_pool_cut_colors(rgb_colors))
+    palette_ = floats_to_uint8(palette[..., :3])
+    indices = _index_to_nearest_color(palette_, rgb_colors[..., :3].astype(np.uint8))
     indices = _np_reshape(indices, rgba_pixels.shape[:2])
-    pmatrix = get_delta_e_matrix(palette)
-    return Quantized(palette, indices, pmatrix, alphas)
+    pmatrix = get_delta_e_matrix(palette_)
+    return Quantized(palette_, indices, pmatrix, alphas)
 
 
 @cache.memoize()
