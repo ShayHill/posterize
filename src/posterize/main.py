@@ -260,8 +260,8 @@ def posterize(
     image_path: str | os.PathLike[str],
     num_cols: int,
     *,
-    savings_weight: float = defaults.SAVINGS_WEIGHT,
-    vibrant_weight: float = defaults.VIBRANT_WEIGHT,
+    savings_weight: float | None = None,
+    vibrant_weight: float | None = None,
     max_dim: int = defaults.MAX_DIM,
 ) -> Posterization:
     """Posterize an image.
@@ -275,6 +275,10 @@ def posterize(
         this many pixels before processing. The resized image is not written to disk.
     :return: posterized image result
     """
+    if savings_weight is None:
+        savings_weight = defaults.SAVINGS_WEIGHT
+    if vibrant_weight is None:
+        vibrant_weight = defaults.VIBRANT_WEIGHT
     target = new_target_image(image_path, max_dim)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
@@ -291,8 +295,8 @@ def posterize_mono(
     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
     num_cols: int,
     *,
-    savings_weight: float = defaults.SAVINGS_WEIGHT,
-    vibrant_weight: float = defaults.VIBRANT_WEIGHT,
+    savings_weight: float | None = None,
+    vibrant_weight: float | None = None,
 ) -> Posterization:
     """Posterize a monochrome (r, c) uint8 array.
 
@@ -302,6 +306,10 @@ def posterize_mono(
     :param vibrant_weight: weight for the vibrance metric vs savings metric
     :return: posterized result
     """
+    if savings_weight is None:
+        savings_weight = defaults.SAVINGS_WEIGHT
+    if vibrant_weight is None:
+        vibrant_weight = defaults.VIBRANT_WEIGHT
     target = new_target_image_mono(pixels)
     state = ImageApproximation(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
