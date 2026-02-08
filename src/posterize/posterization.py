@@ -50,9 +50,14 @@ Layers: TypeAlias = Annotated[npt.NDArray[np.intp], "(n, r, c)"]
 Pixels: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r, c, 3)"]
 
 
+def _get_layer_color_index(layer: npt.NDArray[np.intp]) -> int:
+    """Extract the one non -1 color index from an array layer."""
+    return int(next(x for x in layer.flatten() if x != -1))
+
+
 def _get_layer_color(palette: Palette, layer: npt.NDArray[np.intp]) -> str:
     """Extract the one non -1 color index from an array layer."""
-    color_index = next(x for x in layer.flatten() if x != -1)
+    color_index = _get_layer_color_index(layer)
     return rgb_to_hex(palette[color_index])
 
 
@@ -105,6 +110,7 @@ class Posterization:
             self.svgds.append(svgd)
         self.full_pixels = self.palette[self.indices]
         self.part_pixels = merge_layers(*self.layers)
+        self.color_indices = [_get_layer_color_index(x) for x in self.layers]
         self.colors = [_get_layer_color(self.palette, x) for x in self.layers]
         self.counts = [int(np.sum(layer != -1)) for layer in self.layers]
 

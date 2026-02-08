@@ -41,6 +41,26 @@ def test_quantize_image() -> None:
     Image.fromarray(pixels, mode="RGB").save(out)
 
 
+def test_posterize_cols_list() -> None:
+    """posterize accepts a list of palette indices for cols."""
+    cols = list(range(NUM_COLS))
+    posterized = posterize(str(_CHAUCER_PNG), cols)
+    assert len(posterized.layers) <= NUM_COLS
+    _TMP_DIR.mkdir(exist_ok=True)
+    out = _TMP_DIR / "chaucer_posterized_cols_list.svg"
+    _ = posterized.write_svg(out)
+    got = out.read_text()
+    golden_path = _GOLDEN_DIR / "chaucer_posterized_cols_list.svg"
+    golden = golden_path.read_text()
+    try:
+        assert got == golden
+    except AssertionError:
+        _start_got_and_golden(out, golden_path)
+        raise
+    assert out.exists()
+    assert out.read_text()
+
+
 def test_posterize_golden() -> None:
     """Generated SVG matches golden chaucer_posterized.svg."""
     beg = time.time()

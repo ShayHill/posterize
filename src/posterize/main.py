@@ -33,7 +33,7 @@ from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.posterization import Posterization
 from posterize.quantization import TargetImage, new_target_image, new_target_image_mono
-from posterize.stem import stemize
+from posterize.stem_creator import stemize
 
 if TYPE_CHECKING:
     import os
@@ -258,7 +258,7 @@ class ImageApproximation:
 @cache.memoize()
 def posterize(
     image_path: str | os.PathLike[str],
-    num_cols: int,
+    cols: int | list[int],
     *,
     savings_weight: float | None = None,
     vibrant_weight: float | None = None,
@@ -267,8 +267,9 @@ def posterize(
     """Posterize an image.
 
     :param image_path: path to the image
-    :param num_cols: the number of colors in the posterization image. If not enough
-        colors are available, will silently return fewer layers / colors.
+    :param num_cols: the number of colors in the posterization image. If a list, the
+        subset of color indices to use. If not enough colors are available, will
+        silently return fewer layers / colors.
     :param savings_weight: weight for the savings metric vs average savings
     :param vibrant_weight: weight for the vibrance metric vs savings metric
     :param max_dim: if not None, resize the image so its longer side is at most
@@ -279,14 +280,27 @@ def posterize(
         savings_weight = defaults.SAVINGS_WEIGHT
     if vibrant_weight is None:
         vibrant_weight = defaults.VIBRANT_WEIGHT
+    num_cols = len(cols) if isinstance(cols, list) else cols
     target = new_target_image(image_path, max_dim)
-    state = ImageApproximation(
-        target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
-    )
+    if isinstance(cols, int):
+        state = ImageApproximation(
+            target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
+        )
+    elif max(cols) > len(target.palette) - 1:
+        msg = (
+            f"Color index in {cols} is out of range for"
+            + " palette with {len(target.palette)} colors."
+        )
+        raise ValueError(msg)
+    else:
+        state = ImageApproximation(
+            target,
+            colors=cols,
+            savings_weight=savings_weight,
+            vibrant_weight=vibrant_weight,
+        )
     state.two_pass_fill_layers(num_cols)
-    stem = "-".join(
-        stemize(Path(image_path), num_cols, savings_weight, vibrant_weight, max_dim)
-    )
+    stem = stemize(Path(image_path), cols, savings_weight, vibrant_weight, max_dim)
     return Posterization(target.indices, target.palette, state.layers, stem)
 
 
