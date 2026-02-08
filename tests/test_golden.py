@@ -6,12 +6,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from diskcache import JSONDisk
 from PIL import Image
 
 from posterize.main import cache as posterize_cache
 from posterize.main import posterize, posterize_mono
-from posterize.quantization import cache as quantization_cache, quantize_image
+from posterize.quantization import cache as quantization_cache
+from posterize.quantization import quantize_image
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _GOLDEN_DIR = _TESTS_DIR / "golden"
