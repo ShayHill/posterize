@@ -23,15 +23,10 @@ from cluster_colors import stack_pool_cut_colors
 from numpy import typing as npt
 from PIL import Image
 
+from posterize import defaults
 from posterize.layers import merge_layers
 
 cache = diskcache.Cache(".cache_quantize")
-
-# Resize images larger than this to this maximum dimension. This value is necessary,
-# because you can only create arrays of a certain size. A smaller value might speed
-# up testing, but the quantization cache will need to be cleared if this value
-# changes.
-_MAX_DIM = 500
 
 # any "list" of rgb colors
 _Colors: TypeAlias = Annotated[npt.NDArray[np.uint8], "(n,3)"]
@@ -205,7 +200,7 @@ class Quantized:
 
 
 def quantize_image(
-    image_path: str | os.PathLike[str], max_dim: int | None = None
+    image_path: str | os.PathLike[str], max_dim: int = defaults.MAX_DIM
 ) -> Quantized:
     """Reduce an image file to at most 512 indexed colors.
 
@@ -213,7 +208,6 @@ def quantize_image(
     :param max_dim: maximum width or height; image is thumbnailed if larger
     :return: Quantized with palette, indices, pmatrix, and alphas
     """
-    max_dim = max_dim or _MAX_DIM
     image = Image.open(image_path)
     if max(image.size) > max_dim:
         image.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)

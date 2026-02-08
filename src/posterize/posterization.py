@@ -51,6 +51,7 @@ Pixels: TypeAlias = Annotated[npt.NDArray[np.uint8], "(r, c, 3)"]
 
 
 def _get_layer_color(palette: Palette, layer: npt.NDArray[np.intp]) -> str:
+    """Extract the one non -1 color index from an array layer."""
     color_index = next(x for x in layer.flatten() if x != -1)
     return rgb_to_hex(palette[color_index])
 
@@ -69,12 +70,14 @@ class Posterization:
     indices: Annotated[npt.NDArray[np.intp], "(r, c)"]
     palette: Annotated[npt.NDArray[np.uint8], "(n, 3)"]
     pstrata: Annotated[npt.NDArray[np.intp], "(m, n)"]
+    stem: str = ""
 
     def __init__(
         self,
         indices: Annotated[npt.NDArray[np.intp], "(r, c)"] | npt.ArrayLike,
         palette: Annotated[npt.NDArray[np.uint8], "(n, 3)"] | npt.ArrayLike,
         pstrata: Annotated[npt.NDArray[np.intp], "(m, n)"] | npt.ArrayLike,
+        stem: str = "",
     ) -> None:
         """Initialize the Posterization.
 
@@ -82,10 +85,13 @@ class Posterization:
         :param palette: (512, 3) array of color vectors
         :param pstrata: (n, 512) array of n layers, each containing a value (color
             index) and -1 for transparent
+        :param stem: string to use in the filename for the posterization. Created from
+            the arguments to the constructor.
         """
         self.indices = np.asarray(indices, dtype=np.intp)
         self.palette = np.asarray(palette, dtype=np.uint8)
         self.pstrata = np.asarray(pstrata, dtype=np.intp)
+        self.stem = stem
 
         self.bbox = su.BoundingBox(0, 0, self.indices.shape[1], self.indices.shape[0])
         self.layers = [self.pstrata[0][self.indices]]

@@ -21,16 +21,19 @@ would completely cover the pink layer anyway.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import diskcache
 import numpy as np
 from numpy import typing as npt
 
+from posterize import defaults
 from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.posterization import Posterization
 from posterize.quantization import TargetImage, new_target_image, new_target_image_mono
+from posterize.stem import stemize
 
 if TYPE_CHECKING:
     import os
@@ -41,22 +44,6 @@ cache = diskcache.Cache(".cache_posterize")
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
-
-# Default weight for sum savings vs. average savings. Average savings is, by default,
-# weighted highly. These values are used when selecting the best candidate for the
-# next layer color. A higher average savings weight means colors that improve the
-# approximation a lot in a small area are chosen over colors that improve the
-# approximation a tiny amount over a large area. _DEFAULT_SAVINGS_WEIGHT is the
-# weight given to sum savings. (1 - _DEFAULT_SAVINGS_WEIGHT) is the weight given to
-# average savings.
-_DEFAULT_SAVINGS_WEIGHT = 0.25
-
-
-# A higher number (1.0 is maximum) means colors that are more vibrant are more likely
-# to be selected as layer colors. The default is 0.0, which will be good for most
-# images, but the parameter is available if you have an overall drab image with a few
-# bright highlights and want to pay less attention to the background.
-_DEFAULT_VIBRANT_WEIGHT = 0.0
 
 
 class ColorsExhaustedError(Exception):
@@ -113,8 +100,8 @@ class ImageApproximation:
         colors: Iterable[int] | None = None,
         layers: _IntA | None = None,
         *,
-        savings_weight: float | None = None,
-        vibrant_weight: float | None = None,
+        savings_weight: float = defaults.SAVINGS_WEIGHT,
+        vibrant_weight: float = defaults.VIBRANT_WEIGHT,
     ) -> None:
         """Initialize the ImageApproximation state."""
         self.target = target_image
@@ -126,8 +113,8 @@ class ImageApproximation:
             self.layers = np.empty((0, len(target_image.palette)), dtype=np.intp)
         else:
             self.layers = layers
-        self.savings_weight = savings_weight or _DEFAULT_SAVINGS_WEIGHT
-        self.vibrant_weight = vibrant_weight or _DEFAULT_VIBRANT_WEIGHT
+        self.savings_weight = savings_weight
+        self.vibrant_weight = vibrant_weight
 
         palette = cast("Iterable[npt.NDArray[np.uint8]]", self.target.palette)
         vibrancies = np.array([get_vibrance(c) for c in palette])
@@ -273,9 +260,9 @@ def posterize(
     image_path: str | os.PathLike[str],
     num_cols: int,
     *,
-    savings_weight: None | float = None,
-    vibrant_weight: None | float = None,
-    max_dim: None | int = None,
+    savings_weight: float = defaults.SAVINGS_WEIGHT,
+    vibrant_weight: float = defaults.VIBRANT_WEIGHT,
+    max_dim: int = defaults.MAX_DIM,
 ) -> Posterization:
     """Posterize an image.
 
@@ -293,7 +280,10 @@ def posterize(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )
     state.two_pass_fill_layers(num_cols)
-    return Posterization(target.indices, target.palette, state.layers)
+    stem = "-".join(
+        stemize(Path(image_path), num_cols, savings_weight, vibrant_weight, max_dim)
+    )
+    return Posterization(target.indices, target.palette, state.layers, stem)
 
 
 @cache.memoize()
@@ -301,8 +291,8 @@ def posterize_mono(
     pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"],
     num_cols: int,
     *,
-    savings_weight: None | float = None,
-    vibrant_weight: None | float = None,
+    savings_weight: float = defaults.SAVINGS_WEIGHT,
+    vibrant_weight: float = defaults.VIBRANT_WEIGHT,
 ) -> Posterization:
     """Posterize a monochrome (r, c) uint8 array.
 
