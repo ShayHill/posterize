@@ -114,7 +114,7 @@ class Posterization:
     indices: Annotated[npt.NDArray[np.intp], "(r, c)"]
     pmatrix: Annotated[npt.NDArray[np.float64], "(n, n)"]
     weights: Annotated[npt.NDArray[np.float64], "(n,)"]
-    pstrata: Annotated[npt.NDArray[np.intp], "(m, n)"]
+    strata: Annotated[npt.NDArray[np.intp], "(m, n)"]
     savings_weight: float
     vibrant_weight: float
     source_stem: str = "from_array"
@@ -129,6 +129,8 @@ class Posterization:
         savings_weight: float,
         vibrant_weight: float,
         source_stem: str = "from_array",
+        *,
+        accumulated_svgds: list[str] | None = None,
     ) -> None:
         """Initialize the Posterization.
 
@@ -146,26 +148,28 @@ class Posterization:
         self.indices = np.asarray(indices, dtype=np.intp)
         self.pmatrix = np.asarray(pmatrix, dtype=np.float64)
         self.weights = np.asarray(weights, dtype=np.float64)
-        self.pstrata = np.asarray(pstrata, dtype=np.intp)
+        self.strata = np.asarray(pstrata, dtype=np.intp)
         self.savings_weight = savings_weight
         self.vibrant_weight = vibrant_weight
         self.source_stem = source_stem
 
         self.bbox = su.BoundingBox(0, 0, self.indices.shape[1], self.indices.shape[0])
-        self.layers = [self.pstrata[0][self.indices]]
-        self.svgds = [layer_to_svgd(self.layers[0])]
-        for stratum in self.pstrata[1:]:
-            layer = stratum[self.indices]
-            svgd = layer_to_svgd(layer)
-            if not svgd:
-                continue
-            self.layers.append(layer)
-            self.svgds.append(svgd)
+        self.color_indices = [_get_layer_color_index(x) for x in self.strata]
+        self.colors = [rgb_to_hex(self.palette[x]) for x in self.color_indices]
+        self.layers = [s[self.indices] for s in self.strata]
         self.full_pixels = self.palette[self.indices]
         self.part_pixels = merge_layers(*self.layers)
-        self.color_indices = [_get_layer_color_index(x) for x in self.layers]
-        self.colors = [_get_layer_color(self.palette, x) for x in self.layers]
-        self.counts = [int(np.sum(layer != -1)) for layer in self.layers]
+        # lazy svgds. Pass to keep these for another instance with more layers.
+        self.accumulated_svgds = accumulated_svgds or []
+
+    @property
+    def svgds(self) -> list[str]:
+        """SVG path data string for each layer."""
+        while len(self.accumulated_svgds) < len(self.layers):
+            self.accumulated_svgds.append(
+                layer_to_svgd(self.layers[len(self.accumulated_svgds)])
+            )
+        return self.accumulated_svgds
 
     @property
     def stem(self) -> str:

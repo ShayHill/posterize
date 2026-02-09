@@ -313,34 +313,15 @@ def posterize(
         savings_weight = defaults.SAVINGS_WEIGHT
     if vibrant_weight is None:
         vibrant_weight = defaults.VIBRANT_WEIGHT
-    num_cols = len(cols) if isinstance(cols, list) else cols
     target = new_target_image(image_path, max_dim)
-    if isinstance(cols, int):
-        state = ImageApproximation(
-            target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
-        )
-    elif max(cols) > len(target.palette) - 1:
-        msg = (
-            f"Color index in {cols} is out of range for"
-            + " palette with {len(target.palette)} colors."
-        )
-        raise ValueError(msg)
-    else:
-        state = ImageApproximation(
-            target,
-            colors=cols,
-            savings_weight=savings_weight,
-            vibrant_weight=vibrant_weight,
-        )
-    state.two_pass_fill_layers(num_cols)
     # fmt: off
     pstrata = _posterize(
         image_path, target.palette, target.indices, target.pmatrix, target.weights,
         cols, savings_weight, vibrant_weight,
     )
     return Posterization(
-        target.palette, target.indices, target.pmatrix, target.weights, pstrata,
-        savings_weight, vibrant_weight, source_stem=Path(image_path).stem,
+        target.palette, target.indices, target.pmatrix, target.weights,
+        pstrata, savings_weight, vibrant_weight, source_stem=Path(image_path).stem,
     )
     # fmt: on
 
@@ -425,7 +406,7 @@ def extend_posterization(
         posterization.indices,
         posterization.pmatrix,
         posterization.weights,
-        posterization.pstrata,
+        posterization.strata,
         posterization.savings_weight,
         posterization.vibrant_weight,
         posterization.source_stem,
@@ -442,4 +423,5 @@ def extend_posterization(
         posterization.savings_weight,
         posterization.vibrant_weight,
         source_stem=posterization.source_stem,
+        accumulated_svgds=posterization.accumulated_svgds,
     )
