@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-cache = diskcache.Cache(".cache_posterize")
+cache = diskcache.Cache(".cache_posterize", size_limit=1_000_000_000, cull_limit=0)
 
 _IntA: TypeAlias = npt.NDArray[np.intp]
 _FltA: TypeAlias = npt.NDArray[np.float64]
