@@ -33,7 +33,6 @@ from posterize.color_attributes import get_vibrance
 from posterize.layers import apply_mask, merge_layers
 from posterize.posterization import Posterization
 from posterize.quantization import TargetImage, new_target_image, new_target_image_mono
-from posterize.stem_creator import stemize
 
 if TYPE_CHECKING:
     import os
@@ -300,8 +299,16 @@ def posterize(
             vibrant_weight=vibrant_weight,
         )
     state.two_pass_fill_layers(num_cols)
-    stem = stemize(Path(image_path), cols, savings_weight, vibrant_weight, max_dim)
-    return Posterization(target.indices, target.palette, state.layers, stem)
+    return Posterization(
+        target.palette,
+        target.indices,
+        target.pmatrix,
+        target.weights,
+        state.layers,
+        savings_weight,
+        vibrant_weight,
+        source_stem=Path(image_path).stem,
+    )
 
 
 @cache.memoize()
@@ -329,4 +336,13 @@ def posterize_mono(
         target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
     )
     state.two_pass_fill_layers(num_cols)
-    return Posterization(target.indices, target.palette, state.layers)
+    return Posterization(
+        target.palette,
+        target.indices,
+        target.pmatrix,
+        target.weights,
+        state.layers,
+        savings_weight,
+        vibrant_weight,
+        source_stem="from_array",
+    )

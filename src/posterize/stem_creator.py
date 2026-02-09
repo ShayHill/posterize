@@ -40,4 +40,4 @@ def _iter_stem_parts(*args: Path | float | str | list[int] | None) -> Iterator[s
 
 def stemize(*args: Path | float | str | list[int] | None) -> str:
     """Create a stem for a filename from a list of arguments."""
-    return "-".join(_iter_stem_parts(*args))
+    return ".".join(_iter_stem_parts(*args))
