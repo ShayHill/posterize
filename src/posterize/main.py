@@ -348,7 +348,43 @@ def posterize_mono(
     )
 
 
-@cache.memoize()
+@cache.memoize(ignore=("palette", "indices", "pmatrix", "weights"))
+def _extend_posterization(
+    palette: npt.NDArray[np.uint8],
+    indices: npt.NDArray[np.intp],
+    pmatrix: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64],
+    pstrata: npt.NDArray[np.intp],
+    savings_weight: float,
+    vibrant_weight: float,
+    source_stem: str,
+    num_cols: int | None,
+) -> Posterization | None:
+    if num_cols is None:
+        num_cols = len(pstrata) + 1
+    n_layers = len(pstrata)
+    if num_cols <= n_layers:
+        return None
+    target = TargetImage(palette, indices, pmatrix, weights)
+    state = ImageApproximation(
+        target,
+        layers=pstrata,
+        savings_weight=savings_weight,
+        vibrant_weight=vibrant_weight,
+    )
+    state.two_pass_fill_layers(num_cols)
+    return Posterization(
+        target.palette,
+        target.indices,
+        target.pmatrix,
+        target.weights,
+        state.layers,
+        savings_weight,
+        vibrant_weight,
+        source_stem,
+    )
+
+
 def extend_posterization(
     posterization: Posterization, num_cols: int | None = None
 ) -> Posterization:
@@ -358,31 +394,17 @@ def extend_posterization(
     :param num_cols: desired number of layers; only extends if greater than current
     :return: same or new Posterization with up to num_cols layers
     """
-    if num_cols is None:
-        num_cols = len(posterization.pstrata) + 1
-    n_layers = len(posterization.pstrata)
-    if num_cols <= n_layers:
-        return posterization
-    target = TargetImage(
-        np.asarray(posterization.palette),
-        np.asarray(posterization.indices),
-        np.asarray(posterization.pmatrix),
-        np.asarray(posterization.weights),
-    )
-    state = ImageApproximation(
-        target,
-        layers=np.asarray(posterization.pstrata),
-        savings_weight=posterization.savings_weight,
-        vibrant_weight=posterization.vibrant_weight,
-    )
-    state.two_pass_fill_layers(num_cols)
-    return Posterization(
-        target.palette,
-        target.indices,
-        target.pmatrix,
-        target.weights,
-        state.layers,
-        posterization.savings_weight,
-        posterization.vibrant_weight,
-        source_stem=posterization.source_stem,
+    return (
+        _extend_posterization(
+            posterization.palette,
+            posterization.indices,
+            posterization.pmatrix,
+            posterization.weights,
+            posterization.pstrata,
+            posterization.savings_weight,
+            posterization.vibrant_weight,
+            posterization.source_stem,
+            num_cols,
+        )
+        or posterization
     )
