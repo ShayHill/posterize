@@ -4,7 +4,7 @@
 :created: 2024-05-09
 """
 
-from posterize.main import posterize, posterize_mono
+from posterize.main import extend_posterization, posterize, posterize_mono
 from posterize.posterization import Posterization
 from posterize.quantization import (
     TargetImage,
@@ -15,6 +15,7 @@ from posterize.quantization import (
 __all__ = [
     "Posterization",
     "TargetImage",
+    "extend_posterization",
     "new_target_image",
     "new_target_image_mono",
     "posterize",

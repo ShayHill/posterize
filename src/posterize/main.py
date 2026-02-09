@@ -346,3 +346,38 @@ def posterize_mono(
         vibrant_weight,
         source_stem="from_array",
     )
+
+
+def extend_posterization(posterization: Posterization, num_cols: int) -> Posterization:
+    """Extend a posterization to more layers if num_cols exceeds current layer count.
+
+    :param posterization: existing Posterization to extend
+    :param num_cols: desired number of layers; only extends if greater than current
+    :return: same or new Posterization with up to num_cols layers
+    """
+    n_layers = len(posterization.pstrata)
+    if num_cols <= n_layers:
+        return posterization
+    target = TargetImage(
+        np.asarray(posterization.palette),
+        np.asarray(posterization.indices),
+        np.asarray(posterization.pmatrix),
+        np.asarray(posterization.weights),
+    )
+    state = ImageApproximation(
+        target,
+        layers=np.asarray(posterization.pstrata),
+        savings_weight=posterization.savings_weight,
+        vibrant_weight=posterization.vibrant_weight,
+    )
+    state.two_pass_fill_layers(num_cols)
+    return Posterization(
+        target.palette,
+        target.indices,
+        target.pmatrix,
+        target.weights,
+        state.layers,
+        posterization.savings_weight,
+        posterization.vibrant_weight,
+        source_stem=posterization.source_stem,
+    )
