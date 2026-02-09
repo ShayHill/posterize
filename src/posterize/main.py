@@ -348,13 +348,17 @@ def posterize_mono(
     )
 
 
-def extend_posterization(posterization: Posterization, num_cols: int) -> Posterization:
+def extend_posterization(
+    posterization: Posterization, num_cols: int | None = None
+) -> Posterization:
     """Extend a posterization to more layers if num_cols exceeds current layer count.
 
     :param posterization: existing Posterization to extend
     :param num_cols: desired number of layers; only extends if greater than current
     :return: same or new Posterization with up to num_cols layers
     """
+    if num_cols is None:
+        num_cols = len(posterization.pstrata) + 1
     n_layers = len(posterization.pstrata)
     if num_cols <= n_layers:
         return posterization
