@@ -348,6 +348,7 @@ def posterize_mono(
     )
 
 
+@cache.memoize()
 def extend_posterization(
     posterization: Posterization, num_cols: int | None = None
 ) -> Posterization:
