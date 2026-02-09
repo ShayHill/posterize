@@ -348,7 +348,7 @@ def posterize_mono(
     )
 
 
-@cache.memoize(ignore=("palette", "indices", "pmatrix", "weights"))
+@cache.memoize(ignore=("palette", "indices", "pmatrix", "weights", "pstrata"))
 def _extend_posterization(
     palette: npt.NDArray[np.uint8],
     indices: npt.NDArray[np.intp],
@@ -359,7 +359,8 @@ def _extend_posterization(
     vibrant_weight: float,
     source_stem: str,
     num_cols: int | None,
-) -> Posterization | None:
+) -> npt.NDArray[np.intp] | None:
+    del source_stem
     if num_cols is None:
         num_cols = len(pstrata) + 1
     n_layers = len(pstrata)
@@ -373,16 +374,7 @@ def _extend_posterization(
         vibrant_weight=vibrant_weight,
     )
     state.two_pass_fill_layers(num_cols)
-    return Posterization(
-        target.palette,
-        target.indices,
-        target.pmatrix,
-        target.weights,
-        state.layers,
-        savings_weight,
-        vibrant_weight,
-        source_stem,
-    )
+    return state.layers
 
 
 def extend_posterization(
@@ -394,17 +386,26 @@ def extend_posterization(
     :param num_cols: desired number of layers; only extends if greater than current
     :return: same or new Posterization with up to num_cols layers
     """
-    return (
-        _extend_posterization(
-            posterization.palette,
-            posterization.indices,
-            posterization.pmatrix,
-            posterization.weights,
-            posterization.pstrata,
-            posterization.savings_weight,
-            posterization.vibrant_weight,
-            posterization.source_stem,
-            num_cols,
-        )
-        or posterization
+    pstrata = _extend_posterization(
+        posterization.palette,
+        posterization.indices,
+        posterization.pmatrix,
+        posterization.weights,
+        posterization.pstrata,
+        posterization.savings_weight,
+        posterization.vibrant_weight,
+        posterization.source_stem,
+        num_cols,
+    )
+    if pstrata is None:
+        return posterization
+    return Posterization(
+        posterization.palette,
+        posterization.indices,
+        posterization.pmatrix,
+        posterization.weights,
+        pstrata,
+        posterization.savings_weight,
+        posterization.vibrant_weight,
+        source_stem=posterization.source_stem,
     )
