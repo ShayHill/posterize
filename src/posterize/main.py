@@ -254,7 +254,41 @@ class ImageApproximation:
         return candidates[best_idx]
 
 
-@cache.memoize()
+@cache.memoize(ignore=("palette", "indices", "pmatrix", "weights"))
+def _posterize(
+    image_path: str | os.PathLike[str],
+    palette: npt.NDArray[np.uint8],
+    indices: npt.NDArray[np.intp],
+    pmatrix: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64],
+    cols: int | list[int],
+    savings_weight: float,
+    vibrant_weight: float,
+) -> npt.NDArray[np.intp]:
+    del image_path
+    target = TargetImage(palette, indices, pmatrix, weights)
+    num_cols = len(cols) if isinstance(cols, list) else cols
+    if isinstance(cols, int):
+        state = ImageApproximation(
+            target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
+        )
+    elif max(cols) > len(target.palette) - 1:
+        msg = (
+            f"Color index in {cols} is out of range for"
+            + " palette with {len(target.palette)} colors."
+        )
+        raise ValueError(msg)
+    else:
+        state = ImageApproximation(
+            target,
+            colors=cols,
+            savings_weight=savings_weight,
+            vibrant_weight=vibrant_weight,
+        )
+    state.two_pass_fill_layers(num_cols)
+    return state.layers
+
+
 def posterize(
     image_path: str | os.PathLike[str],
     cols: int | list[int],
@@ -299,16 +333,16 @@ def posterize(
             vibrant_weight=vibrant_weight,
         )
     state.two_pass_fill_layers(num_cols)
-    return Posterization(
-        target.palette,
-        target.indices,
-        target.pmatrix,
-        target.weights,
-        state.layers,
-        savings_weight,
-        vibrant_weight,
-        source_stem=Path(image_path).stem,
+    # fmt: off
+    pstrata = _posterize(
+        image_path, target.palette, target.indices, target.pmatrix, target.weights,
+        cols, savings_weight, vibrant_weight,
     )
+    return Posterization(
+        target.palette, target.indices, target.pmatrix, target.weights, pstrata,
+        savings_weight, vibrant_weight, source_stem=Path(image_path).stem,
+    )
+    # fmt: on
 
 
 @cache.memoize()
