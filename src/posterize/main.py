@@ -272,7 +272,7 @@ def _posterize(
         state = ImageApproximation(
             target, savings_weight=savings_weight, vibrant_weight=vibrant_weight
         )
-    elif max(cols) > len(target.palette) - 1:
+    elif cols and max(cols) > len(target.palette) - 1:
         msg = (
             f"Color index in {cols} is out of range for"
             + " palette with {len(target.palette)} colors."

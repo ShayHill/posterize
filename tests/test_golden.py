@@ -1,4 +1,8 @@
-"""Golden-master tests for posterize and posterize_mono SVG output."""
+"""Golden-master tests for posterize and posterize_mono SVG output.
+
+:author: Shay Hill
+:created: 2026-02-15
+"""
 
 import subprocess
 import time
