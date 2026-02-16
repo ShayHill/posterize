@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, cast
 
 import diskcache
 import numpy as np
+from basic_colormath import get_delta_e_matrix, hex_to_rgb
 from numpy import typing as npt
 
 from posterize import defaults
@@ -36,7 +37,7 @@ from posterize.quantization import TargetImage, new_target_image, new_target_ima
 
 if TYPE_CHECKING:
     import os
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 
 cache = diskcache.Cache(".cache_posterize", size_limit=1_000_000_000, cull_limit=0)
@@ -105,9 +106,9 @@ class ImageApproximation:
         """Initialize the ImageApproximation state."""
         self.target = target_image
         if colors is None:
-            self.colors = tuple(range(len(target_image.palette)))
+            self._colors = tuple(range(len(target_image.palette)))
         else:
-            self.colors = tuple(colors)
+            self._colors = tuple(colors)
         if layers is None:
             self.layers = np.empty((0, len(target_image.palette)), dtype=np.intp)
         else:
@@ -138,14 +139,31 @@ class ImageApproximation:
     def get_available_colors(self) -> list[int]:
         """Get available colors in the image."""
         if len(self.layers) == 0:
-            return list(self.colors)
+            return list(self._colors)
         used_colors = set(self.layer_colors)
-        return [x for x in self.colors if x not in used_colors]
+        return [x for x in self._colors if x not in used_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
         """Add one layer to the state."""
         new_layer = self.get_best_candidate_layer(mask=mask)
         self.layers = np.concatenate([self.layers, [new_layer]])
+
+    def add_one_hex_color(self, color: str) -> int:
+        """Add one color to the state."""
+        rgb = hex_to_rgb(color)
+        available_colors = self.get_available_colors()
+        mat = get_delta_e_matrix(self.target.palette[available_colors], [rgb])
+        col = available_colors[np.argmin(mat)]
+        layer = self._new_candidate_layer(col)
+        self.layers = np.concatenate([self.layers, [layer]])
+        return col
+
+    def add_hex_colors(self, *colors: str) -> list[int]:
+        """Add multiple colors to the state."""
+        indices: list[int] = []
+        for color in colors:
+            indices.append(self.add_one_hex_color(color))
+        return indices
 
     def two_pass_fill_layers(self, num_layers: int) -> None:
         """Fill layers to create masks then fill masks to create layers.
@@ -374,13 +392,16 @@ def _extend_posterization(
     vibrant_weight: float,
     source_stem: str,
     num_cols: int | None,
+    hex_colors: Iterable[str] | None = None,
 ) -> npt.NDArray[np.intp] | None:
     del source_stem
+    hex_colors = list(hex_colors) if hex_colors else []
     if num_cols is None:
         num_cols = len(pstrata) + 1
-    n_layers = len(pstrata)
-    if num_cols <= n_layers:
+
+    if not hex_colors and num_cols <= len(pstrata):
         return None
+
     target = TargetImage(palette, indices, pmatrix, weights)
     state = ImageApproximation(
         target,
@@ -388,17 +409,22 @@ def _extend_posterization(
         savings_weight=savings_weight,
         vibrant_weight=vibrant_weight,
     )
+    _ = state.add_hex_colors(*hex_colors)
     state.two_pass_fill_layers(num_cols)
     return state.layers
 
 
 def extend_posterization(
-    posterization: Posterization, num_cols: int | None = None
+    posterization: Posterization,
+    num_cols: int | None = None,
+    *,
+    hex_colors: Iterable[str] | None = None,
 ) -> Posterization:
     """Extend a posterization to more layers if num_cols exceeds current layer count.
 
     :param posterization: existing Posterization to extend
     :param num_cols: desired number of layers; only extends if greater than current
+    :param hex_colors: colors to add to the posterization
     :return: same or new Posterization with up to num_cols layers
     """
     pstrata = _extend_posterization(
@@ -411,6 +437,7 @@ def extend_posterization(
         posterization.vibrant_weight,
         posterization.source_stem,
         num_cols,
+        hex_colors,
     )
     if pstrata is None:
         return posterization

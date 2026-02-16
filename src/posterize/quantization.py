@@ -253,7 +253,7 @@ def quantize_mono(mono_pixels: Annotated[npt.NDArray[np.uint8], "(r, c)"]) -> Qu
 
 
 def new_target_image(
-    path: str | os.PathLike[str], max_dim: int | None = None
+    path: str | os.PathLike[str], max_dim: int = defaults.MAX_DIM
 ) -> TargetImage:
     """Reduce an image to 512 indexed colors.
 
