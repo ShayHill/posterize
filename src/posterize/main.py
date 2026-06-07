@@ -235,7 +235,7 @@ class ImageApproximation:
         :param mask: optional mask to restrict where the candidate layer is applied
         :return: the candidate layer with the lowest cost
         """
-        state = merge_layers(*self.layers)
+        state = merge_layers(*self.layers, size=self.target.pmatrix.shape[0])
         state_cost = self.target.get_cost(state, mask=mask)
         available_colors = self.get_available_colors()
 

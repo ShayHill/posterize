@@ -20,23 +20,33 @@ from numpy import typing as npt
 _IntA: TypeAlias = npt.NDArray[np.intp]
 
 
-def merge_layers(*layers: _IntA) -> _IntA:
+def merge_layers(*layers: _IntA, size: int | None = None) -> _IntA:
     """Merge layers into a single layer.
 
-    :param layers: n shape (512,) layer arrays, each containing at most two values:
+    :param layers: n shape (palette_size,) layer arrays, each containing at most two
+        values:
         * a color index that will replace one or more indices in the quantized image
         * -1 for transparent. The first layer will be a solid color and contain no -1
-    :return: one (512,) array with the last non-transparent color in each position
+    :param size: palette size; required only when no layers are provided, used to
+        shape the all-transparent result. For a color image, this should be 512. For
+        a mono image, this should be 256.
+    :return: one (palette_size,) array with the last non-transparent color in each
+        position
+    :raises ValueError: if no layers are provided and size is None
 
     Where an image is a (rows, cols) array of indices---each layer of an
     approximation will color some of those indices with one palette index per layer,
     and others with -1 for transparency.
     """
-    if len(layers) == 0:
-        return np.ones((512,), dtype=int) * -1
-    merged = layers[0] * 1
+    if not layers:
+        if size is None:
+            msg = "size is required when merging zero layers"
+            raise ValueError(msg)
+        return np.full(size, -1, dtype=np.intp)
+    merged: _IntA = layers[0] * 1
     for layer in layers[1:]:
-        merged[np.where(layer != -1)] = layer[np.where(layer != -1)]
+        non_transparent = layer != -1
+        merged[non_transparent] = layer[non_transparent]
     return merged
 
 

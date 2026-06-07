@@ -158,7 +158,7 @@ class Posterization:
         self.colors = [rgb_to_hex(self.palette[x]) for x in self.color_indices]
         self.layers = [s[self.indices] for s in self.strata]
         self.full_pixels = self.palette[self.indices]
-        self.part_pixels = merge_layers(*self.layers)
+        self.part_pixels = merge_layers(*self.layers, size=self.palette.shape[0])
         # lazy svgds. Pass to keep these for another instance with more layers.
         self.accumulated_svgds = accumulated_svgds or []
 
