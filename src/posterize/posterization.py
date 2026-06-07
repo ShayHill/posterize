@@ -79,6 +79,11 @@ def compress_int_string(s: str) -> str:
     return "".join(out)
 
 
+def _empty_lock_dict() -> dict[int, int]:
+    """Typed default factory for ``Posterization.locked``."""
+    return {}
+
+
 def _get_layer_color_index(layer: npt.NDArray[np.intp]) -> int:
     """Extract the one non -1 color index from an array layer."""
     return int(next(x for x in layer.flatten() if x != -1))
@@ -118,6 +123,7 @@ class Posterization:
     savings_weight: float
     vibrant_weight: float
     source_stem: str = "from_array"
+    locked: dict[int, int] = dataclasses.field(default_factory=_empty_lock_dict)
 
     def __init__(
         self,
@@ -131,6 +137,7 @@ class Posterization:
         source_stem: str = "from_array",
         *,
         accumulated_svgds: list[str] | None = None,
+        locked: dict[int, int] | None = None,
     ) -> None:
         """Initialize the Posterization.
 
@@ -143,6 +150,10 @@ class Posterization:
         :param savings_weight: weight used for the savings metric vs average savings
         :param vibrant_weight: weight used for the vibrance metric
         :param source_stem: file stem of the source image (default 'from_array')
+        :param accumulated_svgds: cached SVG path data carried from a prior instance
+        :param locked: slot index -> palette index for layers whose color should not
+            be re-selected during a two-pass replay. Mutate in place to add or
+            remove locks between extension calls.
         """
         self.palette = np.asarray(palette, dtype=np.uint8)
         self.indices = np.asarray(indices, dtype=np.intp)
@@ -152,6 +163,7 @@ class Posterization:
         self.savings_weight = savings_weight
         self.vibrant_weight = vibrant_weight
         self.source_stem = source_stem
+        self.locked = dict(locked) if locked else {}
 
         self.bbox = su.BoundingBox(0, 0, self.indices.shape[1], self.indices.shape[0])
         self.color_indices = [_get_layer_color_index(x) for x in self.strata]
@@ -161,6 +173,14 @@ class Posterization:
         self.part_pixels = merge_layers(*self.layers, size=self.palette.shape[0])
         # lazy svgds. Pass to keep these for another instance with more layers.
         self.accumulated_svgds = accumulated_svgds or []
+
+    def lock(self, slot: int) -> None:
+        """Pin the color at ``slot`` so two-pass replays leave it unchanged."""
+        self.locked[slot] = self.color_indices[slot]
+
+    def unlock(self, slot: int) -> None:
+        """Release the lock at ``slot`` (no-op if not locked)."""
+        _ = self.locked.pop(slot, None)
 
     @property
     def svgds(self) -> list[str]:

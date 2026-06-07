@@ -102,6 +102,7 @@ class ImageApproximation:
         *,
         savings_weight: float = defaults.SAVINGS_WEIGHT,
         vibrant_weight: float = defaults.VIBRANT_WEIGHT,
+        locked: dict[int, int] | None = None,
     ) -> None:
         """Initialize the ImageApproximation state."""
         self.target = target_image
@@ -115,6 +116,7 @@ class ImageApproximation:
             self.layers = layers
         self.savings_weight = savings_weight
         self.vibrant_weight = vibrant_weight
+        self.locked: dict[int, int] = dict(locked) if locked else {}
 
         palette = cast("Iterable[npt.NDArray[np.uint8]]", self.target.palette)
         vibrancies = np.array([get_vibrance(c) for c in palette])
@@ -137,10 +139,16 @@ class ImageApproximation:
         return np.array([np.where(image == x, 1, 0) for x in self.layer_colors])
 
     def get_available_colors(self) -> list[int]:
-        """Get available colors in the image."""
+        """Get available colors in the image.
+
+        Excludes colors already placed in ``self.layers`` and palette indices
+        reserved by ``self.locked`` (so a locked color is not stolen by a free
+        slot before the locked slot is replayed).
+        """
+        reserved = set(self.locked.values())
         if len(self.layers) == 0:
-            return list(self._colors)
-        used_colors = set(self.layer_colors)
+            return [x for x in self._colors if x not in reserved]
+        used_colors = set(self.layer_colors) | reserved
         return [x for x in self._colors if x not in used_colors]
 
     def _add_one_layer(self, mask: _IntA | None = None) -> None:
@@ -149,11 +157,16 @@ class ImageApproximation:
         self.layers = np.concatenate([self.layers, [new_layer]])
 
     def add_one_hex_color(self, color: str) -> int:
-        """Add one color to the state."""
+        """Add one color to the state.
+
+        The new layer's slot is recorded in ``self.locked`` so its color is
+        preserved across subsequent ``two_pass_fill_layers`` replays.
+        """
         rgb = hex_to_rgb(color)
         available_colors = self.get_available_colors()
         mat = get_delta_e_matrix(self.target.palette[available_colors], [rgb])
         col = available_colors[np.argmin(mat)]
+        self.locked[len(self.layers)] = col
         layer = self._new_candidate_layer(col)
         self.layers = np.concatenate([self.layers, [layer]])
         return col
@@ -187,8 +200,12 @@ class ImageApproximation:
         if len(self.layers) >= 2:
             layer_masks = self.get_layer_masks()
             self.layers.resize((0, self.layers.shape[1]), refcheck=False)
-            for mask in layer_masks:
-                self._add_one_layer(mask=mask)
+            for i, mask in enumerate(layer_masks):
+                if i in self.locked:
+                    locked_layer = self._new_candidate_layer(self.locked[i])
+                    self.layers = np.concatenate([self.layers, [locked_layer]])
+                else:
+                    self._add_one_layer(mask=mask)
         self.two_pass_fill_layers(num_layers)
 
     # ===============================================================================
@@ -393,7 +410,8 @@ def _extend_posterization(
     source_stem: str,
     num_cols: int | None,
     hex_colors: Iterable[str] | None = None,
-) -> npt.NDArray[np.intp] | None:
+    locked_items: tuple[tuple[int, int], ...] = (),
+) -> tuple[npt.NDArray[np.intp], dict[int, int]] | None:
     del source_stem
     hex_colors = list(hex_colors) if hex_colors else []
     if num_cols is None:
@@ -408,10 +426,11 @@ def _extend_posterization(
         layers=pstrata,
         savings_weight=savings_weight,
         vibrant_weight=vibrant_weight,
+        locked=dict(locked_items),
     )
     _ = state.add_hex_colors(*hex_colors)
     state.two_pass_fill_layers(num_cols)
-    return state.layers
+    return state.layers, dict(state.locked)
 
 
 def extend_posterization(
@@ -422,12 +441,16 @@ def extend_posterization(
 ) -> Posterization:
     """Extend a posterization to more layers if num_cols exceeds current layer count.
 
+    Locks on the input posterization (``posterization.locked``) are read at call
+    time, so they can be mutated between calls (e.g. ``posterization.unlock(i)``)
+    to control which slots are preserved by the next pass.
+
     :param posterization: existing Posterization to extend
     :param num_cols: desired number of layers; only extends if greater than current
     :param hex_colors: colors to add to the posterization
     :return: same or new Posterization with up to num_cols layers
     """
-    pstrata = _extend_posterization(
+    result = _extend_posterization(
         posterization.palette,
         posterization.indices,
         posterization.pmatrix,
@@ -438,9 +461,11 @@ def extend_posterization(
         posterization.source_stem,
         num_cols,
         hex_colors,
+        tuple(sorted(posterization.locked.items())),
     )
-    if pstrata is None:
+    if result is None:
         return posterization
+    pstrata, locked = result
     return Posterization(
         posterization.palette,
         posterization.indices,
@@ -451,4 +476,5 @@ def extend_posterization(
         posterization.vibrant_weight,
         source_stem=posterization.source_stem,
         accumulated_svgds=posterization.accumulated_svgds,
+        locked=locked,
     )
