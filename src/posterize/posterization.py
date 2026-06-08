@@ -166,13 +166,37 @@ class Posterization:
         self.locked = dict(locked) if locked else {}
 
         self.bbox = su.BoundingBox(0, 0, self.indices.shape[1], self.indices.shape[0])
-        self.color_indices = [_get_layer_color_index(x) for x in self.strata]
-        self.colors = [rgb_to_hex(self.palette[x]) for x in self.color_indices]
-        self.layers = [s[self.indices] for s in self.strata]
         self.full_pixels = self.palette[self.indices]
-        self.part_pixels = merge_layers(*self.layers, size=self.palette.shape[0])
         # lazy svgds. Pass to keep these for another instance with more layers.
         self.accumulated_svgds = accumulated_svgds or []
+
+    @property
+    def color_indices(self) -> list[int]:
+        """List of palette color indices, one per layer."""
+        return [_get_layer_color_index(x) for x in self.strata]
+
+    @property
+    def colors(self) -> list[str]:
+        """List of hex color strings for each layer."""
+        return [rgb_to_hex(self.palette[x]) for x in self.color_indices]
+
+    @property
+    def layers(self) -> list[npt.NDArray[np.intp]]:
+        """(r, c) array for each layer."""
+        return [s[self.indices] for s in self.strata]
+
+    @property
+    def part_pixels(self) -> npt.NDArray[np.uint8]:
+        """(r, c, 3) array of RGB values for the part pixels (from layers)."""
+        return self.palette[merge_layers(*self.layers, size=self.palette.shape[0])]
+
+    def reduce_strata(self, num: int) -> None:
+        """Reduce the number of strata.
+
+        :param num: number of strata to keep (from the bottom)
+        """
+        self.strata = self.strata[:num]
+        self.accumulated_svgds = self.accumulated_svgds[:num]
 
     def lock(self, slot: int) -> None:
         """Pin the color at ``slot`` so two-pass replays leave it unchanged."""
